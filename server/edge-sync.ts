@@ -1,4 +1,4 @@
-import type { EdgeClickEvent } from "../shared/edge.js";
+import type { EdgeClickEvent, EdgeLinkConfig } from "../shared/edge.js";
 import { toEdgeLink } from "../shared/edge.js";
 import type { ClickEvent, SmartLink } from "../shared/types.js";
 
@@ -35,18 +35,21 @@ export async function syncLinkToEdge(link: SmartLink): Promise<void> {
 
 export async function deleteLinkFromEdge(slug: string): Promise<void> {
   if (!isEdgeSyncConfigured()) return;
+  const tombstone = deletedEdgeLink(slug);
   if (edgeWorkerSyncUrl && edgeSyncSecret) {
     const response = await fetch(`${edgeWorkerSyncUrl}/links/${encodeURIComponent(slug)}`, {
-      method: "DELETE",
-      headers: edgeWorkerHeaders()
+      method: "PUT",
+      headers: edgeWorkerHeaders(),
+      body: JSON.stringify(tombstone)
     });
     await assertSyncOk(response, `delete ${slug}`);
     return;
   }
 
   const response = await fetch(kvUrl(`link:${slug}`), {
-    method: "DELETE",
-    headers: kvHeaders()
+    method: "PUT",
+    headers: kvHeaders(),
+    body: JSON.stringify(tombstone)
   });
   await assertCloudflareOk(response, `delete ${slug}`);
 }
@@ -97,6 +100,18 @@ function edgeWorkerHeaders(): HeadersInit {
   return {
     Authorization: `Bearer ${edgeSyncSecret}`,
     "Content-Type": "application/json"
+  };
+}
+
+function deletedEdgeLink(slug: string): EdgeLinkConfig {
+  return {
+    id: `deleted:${slug}`,
+    slug,
+    status: "paused",
+    iosUrl: "",
+    androidUrl: "",
+    webUrl: "",
+    fallbackUrl: ""
   };
 }
 
