@@ -90,6 +90,7 @@ app.delete("/api/links/:id", async (request, response, next) => {
     const previous = await findLinkById(request.params.id);
     const deleted = await deleteLink(request.params.id);
     if (deleted && previous) {
+      console.info(`Reconciling deleted edge link ${previous.slug}`);
       await deleteLinkFromEdge(previous.slug).catch((error) => console.error("Failed to delete edge link", error));
       await syncLinksToEdge(await listRawLinks()).catch((error) => console.error("Failed to reconcile edge links", error));
     }
