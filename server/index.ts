@@ -11,6 +11,7 @@ import {
   createLink,
   createSession,
   createUserAccount,
+  deleteGroup,
   deleteLink,
   deleteSession,
   findLinkById,
@@ -21,6 +22,7 @@ import {
   listGroups,
   listLinks,
   listRawLinks,
+  updateGroup,
   updateLink
 } from "./storage.js";
 import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
@@ -155,6 +157,28 @@ app.post("/api/groups", async (request, response, next) => {
       return;
     }
     response.status(201).json(await createGroup(request.body, currentUser(response).id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/groups/:id", async (request, response, next) => {
+  try {
+    const updated = await updateGroup(request.params.id, request.body, currentUser(response).id);
+    if (!updated) {
+      response.status(404).json({ error: "Group not found." });
+      return;
+    }
+    response.json(updated);
+  } catch (error) {
+    response.status(400).json({ error: error instanceof Error ? error.message : "Unable to update group." });
+  }
+});
+
+app.delete("/api/groups/:id", async (request, response, next) => {
+  try {
+    const deleted = await deleteGroup(request.params.id, currentUser(response).id);
+    response.status(deleted ? 204 : 404).end();
   } catch (error) {
     next(error);
   }

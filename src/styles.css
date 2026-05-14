@@ -681,6 +681,46 @@ textarea:focus {
   background: var(--muted);
 }
 
+.group-shell {
+  position: relative;
+}
+
+.group-actions {
+  position: absolute;
+  right: 0;
+  top: -39px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.group-action-button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  color: var(--foreground);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.28);
+}
+
+.group-action-button:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.group-action-button.danger {
+  color: #ff444f;
+}
+
+.group-action-button.danger:hover {
+  border-color: #ff444f;
+  background: color-mix(in srgb, #ff444f 10%, var(--card));
+}
+
 .group-bar {
   display: flex;
   flex-wrap: wrap;
@@ -731,36 +771,6 @@ textarea:focus {
 .group-chip.dashed {
   border: 1px dashed var(--border);
   background: transparent;
-}
-
-.group-editor {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--background);
-  padding: 2px 5px 2px 8px;
-}
-
-.group-editor input {
-  min-height: 22px;
-  width: 112px;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  font-size: 12px;
-}
-
-.group-editor button {
-  display: grid;
-  width: 20px;
-  height: 20px;
-  place-items: center;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted-foreground);
 }
 
 .links-table {
@@ -1671,6 +1681,12 @@ textarea:focus {
   .sort-dropdown {
     left: 0;
     right: auto;
+  }
+
+  .group-actions {
+    position: static;
+    justify-content: flex-end;
+    margin-bottom: 8px;
   }
 
   .links-table-head {

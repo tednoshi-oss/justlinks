@@ -58,6 +58,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  updateGroup: (id: string, payload: Partial<LinkGroup>) =>
+    requestJson<LinkGroup>(`/api/groups/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }),
+  deleteGroup: async (id: string) => {
+    const response = await fetch(`/api/groups/${id}`, { method: "DELETE" });
+    if (!response.ok && response.status !== 404) {
+      throw new Error(`Delete failed: ${response.status}`);
+    }
+  },
   createLink: (payload: Partial<SmartLink>) =>
     requestJson<LinkWithStats>("/api/links", {
       method: "POST",

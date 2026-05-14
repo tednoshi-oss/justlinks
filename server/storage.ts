@@ -268,6 +268,7 @@ export async function addClickEvents(events: ClickEvent[]): Promise<void> {
 export async function createGroup(input: Partial<LinkGroup>, userId: string): Promise<LinkGroup> {
   const store = await getStore();
   const name = String(input.name || "").trim();
+  if (!name) throw new Error("Group name is required.");
   const group: LinkGroup = {
     id: uniqueGroupId(slugText(name), groupsForUser(store, userId)),
     userId,
@@ -277,6 +278,39 @@ export async function createGroup(input: Partial<LinkGroup>, userId: string): Pr
   store.groups.push(group);
   await persistStore(store);
   return group;
+}
+
+export async function updateGroup(id: string, input: Partial<LinkGroup>, userId: string): Promise<LinkGroup | null> {
+  const store = await getStore();
+  const index = store.groups.findIndex((group) => group.id === id && group.userId === userId);
+  if (index === -1) return null;
+
+  const current = store.groups[index];
+  const name = typeof input.name === "string" ? input.name.trim() : current.name;
+  if (!name) throw new Error("Group name is required.");
+
+  const updated: LinkGroup = {
+    ...current,
+    name,
+    color: typeof input.color === "string" && input.color.trim() ? input.color.trim() : current.color
+  };
+
+  store.groups[index] = updated;
+  await persistStore(store);
+  return updated;
+}
+
+export async function deleteGroup(id: string, userId: string): Promise<boolean> {
+  const store = await getStore();
+  const previousLength = store.groups.length;
+  store.groups = store.groups.filter((group) => group.id !== id || group.userId !== userId);
+
+  if (store.groups.length === previousLength) return false;
+
+  store.links = store.links.map((link) => (link.userId === userId && link.groupId === id ? { ...link, groupId: null, updatedAt: new Date().toISOString() } : link));
+  invalidateIndexes();
+  await persistStore(store);
+  return true;
 }
 
 export async function createLink(input: Partial<SmartLink>, userId: string): Promise<LinkWithStats> {

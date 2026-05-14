@@ -62,6 +62,7 @@ export function App() {
   const [groups, setGroups] = useState<LinkGroup[]>(initialGroups);
   const [isCreateOpen, setCreateOpen] = useState(false);
   const [isGroupOpen, setGroupOpen] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<LinkGroup | null>(null);
   const [editingLink, setEditingLink] = useState<LinkWithStats | null>(null);
   const [statsLink, setStatsLink] = useState<LinkWithStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -108,7 +109,7 @@ export function App() {
       setSummary(summaryData);
       setLinks(linksData);
       setAnalytics(analyticsData);
-      setGroups(groupsData.length ? groupsData : initialGroups);
+      setGroups(groupsData);
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Unable to load dashboard.";
       if (message.includes("Authentication required")) {
@@ -165,12 +166,40 @@ export function App() {
     await refresh();
   }
 
-  async function createGroup(name: string, color: string) {
+  function openCreateGroup() {
+    setEditingGroup(null);
+    setGroupOpen(true);
+  }
+
+  function closeGroupModal() {
+    setEditingGroup(null);
+    setGroupOpen(false);
+  }
+
+  function editGroup(group: LinkGroup) {
+    setEditingGroup(group);
+    setGroupOpen(true);
+  }
+
+  async function saveGroup(name: string, color: string) {
     const clean = name.trim();
     if (!clean) return;
-    const group = await api.createGroup({ name: clean, color });
-    setGroups((current) => [...current, group]);
-    setGroupOpen(false);
+    if (editingGroup) {
+      const updated = await api.updateGroup(editingGroup.id, { name: clean, color });
+      setGroups((current) => current.map((group) => (group.id === updated.id ? updated : group)));
+    } else {
+      const group = await api.createGroup({ name: clean, color });
+      setGroups((current) => [...current, group]);
+    }
+    closeGroupModal();
+  }
+
+  async function removeGroup(group: LinkGroup) {
+    if (!window.confirm(`Delete "${group.name}" group? Links in this group will stay active.`)) return;
+    await api.deleteGroup(group.id);
+    setGroups((current) => current.filter((item) => item.id !== group.id));
+    setLinks((current) => current.map((link) => (link.groupId === group.id ? { ...link, groupId: null } : link)));
+    setGroupFilter((current) => (current === group.id ? null : current));
   }
 
   const filteredLinks = useMemo(() => {
@@ -231,7 +260,9 @@ export function App() {
                 onQueryChange={setQuery}
                 onSortChange={setSortMode}
                 onGroupSelect={setGroupFilter}
-                onCreateGroup={() => setGroupOpen(true)}
+                onCreateGroup={openCreateGroup}
+                onEditGroup={editGroup}
+                onDeleteGroup={(group) => void removeGroup(group)}
                 onCreate={() => setCreateOpen(true)}
                 onEdit={setEditingLink}
                 onDelete={(link) => void removeLink(link)}
@@ -256,7 +287,7 @@ export function App() {
         />
       ) : null}
       {statsLink ? <StatsModal link={statsLink} events={analytics.recentEvents} onClose={() => setStatsLink(null)} /> : null}
-      {isGroupOpen ? <GroupModal onClose={() => setGroupOpen(false)} onSubmit={createGroup} /> : null}
+      {isGroupOpen ? <GroupModal editGroup={editingGroup} onClose={closeGroupModal} onSubmit={saveGroup} /> : null}
     </div>
   );
 }
@@ -494,6 +525,8 @@ function LinksView({
   onSortChange,
   onGroupSelect,
   onCreateGroup,
+  onEditGroup,
+  onDeleteGroup,
   onCreate,
   onEdit,
   onDelete,
@@ -511,6 +544,8 @@ function LinksView({
   onSortChange: (value: SortMode) => void;
   onGroupSelect: (value: string | null) => void;
   onCreateGroup: () => void;
+  onEditGroup: (group: LinkGroup) => void;
+  onDeleteGroup: (group: LinkGroup) => void;
   onCreate: () => void;
   onEdit: (link: LinkWithStats) => void;
   onDelete: (link: LinkWithStats) => void;
@@ -545,7 +580,7 @@ function LinksView({
         </div>
       </div>
 
-      <GroupBar groups={groups} selectedGroup={selectedGroup} onSelect={onGroupSelect} onCreate={onCreateGroup} />
+      <GroupBar groups={groups} selectedGroup={selectedGroup} onSelect={onGroupSelect} onCreate={onCreateGroup} onEdit={onEditGroup} onDelete={onDeleteGroup} />
 
       <section className="links-table">
         <div className="links-table-head">
@@ -669,38 +704,67 @@ const sortOptions: { value: SortMode; label: string }[] = [
   { value: "name-desc", label: "Name Z-A" }
 ];
 
-function GroupBar({ groups, selectedGroup, onSelect, onCreate }: { groups: LinkGroup[]; selectedGroup: string | null; onSelect: (id: string | null) => void; onCreate: () => void }) {
+function GroupBar({
+  groups,
+  selectedGroup,
+  onSelect,
+  onCreate,
+  onEdit,
+  onDelete
+}: {
+  groups: LinkGroup[];
+  selectedGroup: string | null;
+  onSelect: (id: string | null) => void;
+  onCreate: () => void;
+  onEdit: (group: LinkGroup) => void;
+  onDelete: (group: LinkGroup) => void;
+}) {
+  const activeGroup = groups.find((group) => group.id === selectedGroup) || null;
+
   return (
-    <div className="group-bar">
-      <button className={`group-chip ${selectedGroup === null ? "active" : ""}`} type="button" onClick={() => onSelect(null)}>
-        All
-      </button>
-      {groups.map((group) => (
-        <button
-          className={`group-chip color ${selectedGroup === group.id ? "active" : ""}`}
-          style={{ "--chip-color": group.color } as CSSProperties}
-          type="button"
-          key={group.id}
-          onClick={() => onSelect(selectedGroup === group.id ? null : group.id)}
-        >
-          <span />
-          {group.name}
+    <div className="group-shell">
+      {activeGroup ? (
+        <div className="group-actions" aria-label={`${activeGroup.name} group actions`}>
+          <button className="group-action-button" type="button" title={`Edit ${activeGroup.name}`} aria-label={`Edit ${activeGroup.name} group`} onClick={() => onEdit(activeGroup)}>
+            <Edit3 size={16} />
+          </button>
+          <button className="group-action-button danger" type="button" title={`Delete ${activeGroup.name}`} aria-label={`Delete ${activeGroup.name} group`} onClick={() => onDelete(activeGroup)}>
+            <Trash2 size={16} />
+          </button>
+        </div>
+      ) : null}
+      <div className="group-bar">
+        <button className={`group-chip ${selectedGroup === null ? "active" : ""}`} type="button" onClick={() => onSelect(null)}>
+          All
         </button>
-      ))}
-      <button className="group-chip dashed" type="button" onClick={onCreate}>
-        <Plus size={13} />
-        New Group
-      </button>
+        {groups.map((group) => (
+          <button
+            className={`group-chip color ${selectedGroup === group.id ? "active" : ""}`}
+            style={{ "--chip-color": group.color } as CSSProperties}
+            type="button"
+            key={group.id}
+            onClick={() => onSelect(selectedGroup === group.id ? null : group.id)}
+          >
+            <span />
+            {group.name}
+          </button>
+        ))}
+        <button className="group-chip dashed" type="button" onClick={onCreate}>
+          <Plus size={13} />
+          New Group
+        </button>
+      </div>
     </div>
   );
 }
 
 const groupColors = ["#6366f1", "#8b5cf6", "#ec4899", "#ef4444", "#fb923c", "#facc15", "#22c55e", "#67e8f9"];
 
-function GroupModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (name: string, color: string) => Promise<void> }) {
-  const [name, setName] = useState("");
-  const [color, setColor] = useState(groupColors[0]);
+function GroupModal({ editGroup, onClose, onSubmit }: { editGroup?: LinkGroup | null; onClose: () => void; onSubmit: (name: string, color: string) => Promise<void> }) {
+  const [name, setName] = useState(editGroup?.name || "");
+  const [color, setColor] = useState(editGroup?.color || groupColors[0]);
   const [saving, setSaving] = useState(false);
+  const isEditing = Boolean(editGroup);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -717,7 +781,7 @@ function GroupModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (nam
     <div className="modal-backdrop" role="presentation">
       <form className="modal group-modal" onSubmit={(event) => void submit(event)}>
         <div className="modal-header">
-          <h2>Create Group</h2>
+          <h2>{isEditing ? "Edit Group" : "Create Group"}</h2>
           <button className="icon-button ghost" type="button" title="Close" aria-label="Close" onClick={onClose}>
             <X size={18} />
           </button>
@@ -743,7 +807,7 @@ function GroupModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (nam
             Cancel
           </button>
           <button className="button primary" type="submit" disabled={!name.trim() || saving}>
-            Create
+            {isEditing ? "Save" : "Create"}
           </button>
         </div>
       </form>
