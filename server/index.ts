@@ -58,7 +58,7 @@ app.post("/api/links", async (request, response, next) => {
       return;
     }
     const link = await createLink(request.body);
-    void syncLinkToEdge(link).catch((error) => console.error("Failed to sync link to edge", error));
+    await syncLinkToEdge(link).catch((error) => console.error("Failed to sync link to edge", error));
     response.status(201).json(link);
   } catch (error) {
     next(error);
@@ -74,9 +74,9 @@ app.put("/api/links/:id", async (request, response, next) => {
       return;
     }
     if (previous && previous.slug !== updated.slug) {
-      void syncLinksToEdge(await listRawLinks()).catch((error) => console.error("Failed to reconcile edge links", error));
+      await syncLinksToEdge(await listRawLinks()).catch((error) => console.error("Failed to reconcile edge links", error));
     } else {
-      void syncLinkToEdge(updated).catch((error) => console.error("Failed to sync link to edge", error));
+      await syncLinkToEdge(updated).catch((error) => console.error("Failed to sync link to edge", error));
     }
     response.json(updated);
   } catch (error) {
