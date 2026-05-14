@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Request } from "express";
 import { addClickEvent, addClickEvents, createGroup, createLink, deleteLink, findLinkById, findLinkBySlug, getAnalytics, getSummary, listGroups, listLinks, listRawLinks, updateLink } from "./storage.js";
-import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
+import { edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
 import { classifyReferrer, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
 import { toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
 import type { ClickEvent } from "../shared/types.js";
@@ -74,9 +74,10 @@ app.put("/api/links/:id", async (request, response, next) => {
       return;
     }
     if (previous && previous.slug !== updated.slug) {
-      void deleteLinkFromEdge(previous.slug).catch((error) => console.error("Failed to delete old edge slug", error));
+      void syncLinksToEdge(await listRawLinks()).catch((error) => console.error("Failed to reconcile edge links", error));
+    } else {
+      void syncLinkToEdge(updated).catch((error) => console.error("Failed to sync link to edge", error));
     }
-    void syncLinkToEdge(updated).catch((error) => console.error("Failed to sync link to edge", error));
     response.json(updated);
   } catch (error) {
     next(error);
@@ -85,10 +86,9 @@ app.put("/api/links/:id", async (request, response, next) => {
 
 app.delete("/api/links/:id", async (request, response, next) => {
   try {
-    const previous = await findLinkById(request.params.id);
     const deleted = await deleteLink(request.params.id);
-    if (previous) {
-      void deleteLinkFromEdge(previous.slug).catch((error) => console.error("Failed to delete edge link", error));
+    if (deleted) {
+      await syncLinksToEdge(await listRawLinks()).catch((error) => console.error("Failed to reconcile edge links", error));
     }
     response.status(deleted ? 204 : 404).end();
   } catch (error) {

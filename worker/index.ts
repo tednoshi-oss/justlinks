@@ -34,6 +34,7 @@ interface MessageBatch<T = unknown> {
 
 interface KVNamespace {
   get<T = string>(key: string, options?: { type?: "json" | "text" }): Promise<T | null>;
+  list(options?: { cursor?: string; limit?: number; prefix?: string }): Promise<{ keys: { name: string }[]; list_complete: boolean; cursor?: string }>;
   put(key: string, value: string): Promise<void>;
   delete(key: string): Promise<void>;
 }
@@ -96,15 +97,32 @@ async function handleEdgeSyncRequest(request: Request, env: Env, url: URL): Prom
   if (request.method === "POST" && url.pathname === "/__edge/sync") {
     const body = await readJson<{ links?: EdgeLinkConfig[] }>(request);
     const links = Array.isArray(body?.links) ? body.links : [];
+    const expectedKeys = new Set(links.filter((link) => link?.slug).map((link) => `link:${link.slug}`));
     await Promise.all(
       links
         .filter((link) => link?.slug)
         .map((link) => env.JUSTLINKS_LINKS.put(`link:${link.slug}`, JSON.stringify(link)))
     );
-    return jsonResponse({ ok: true, synced: links.length });
+    const deleted = await pruneMissingLinks(expectedKeys, env);
+    return jsonResponse({ ok: true, synced: links.length, deleted });
   }
 
   return jsonResponse({ error: "Not found." }, 404);
+}
+
+async function pruneMissingLinks(expectedKeys: Set<string>, env: Env): Promise<number> {
+  let deleted = 0;
+  let cursor: string | undefined;
+
+  do {
+    const page = await env.JUSTLINKS_LINKS.list({ prefix: "link:", cursor });
+    const staleKeys = page.keys.filter((key) => !expectedKeys.has(key.name));
+    await Promise.all(staleKeys.map((key) => env.JUSTLINKS_LINKS.delete(key.name)));
+    deleted += staleKeys.length;
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+
+  return deleted;
 }
 
 async function getEdgeLink(slug: string, env: Env): Promise<EdgeLinkConfig | null> {
