@@ -14,12 +14,8 @@ services:
       # Set these in the Render dashboard after Cloudflare resources are created.
       - key: EDGE_SYNC_SECRET
         sync: false
-      - key: CF_ACCOUNT_ID
-        sync: false
-      - key: CF_KV_NAMESPACE_ID
-        sync: false
-      - key: CF_API_TOKEN
-        sync: false
+      - key: EDGE_WORKER_SYNC_URL
+        value: https://justlinks.cc/__edge
     disk:
       name: justlinks-data
       mountPath: /opt/render/project/src/storage

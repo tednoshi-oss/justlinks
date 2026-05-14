@@ -58,9 +58,7 @@ Use Render's Blueprint flow from a Git repository. The persistent disk requires 
 Set these Render environment variables after the Cloudflare resources exist:
 
 - `EDGE_SYNC_SECRET`: a long random secret shared with the Worker.
-- `CF_ACCOUNT_ID`: your Cloudflare account ID.
-- `CF_KV_NAMESPACE_ID`: the KV namespace ID for link configs.
-- `CF_API_TOKEN`: Cloudflare API token with permission to edit that KV namespace.
+- `EDGE_WORKER_SYNC_URL`: the Worker sync endpoint, for example `https://justlinks.cc/__edge`.
 
 After those are set, creating/updating/deleting links in the dashboard syncs them to Cloudflare KV automatically. You can also trigger a full sync with:
 

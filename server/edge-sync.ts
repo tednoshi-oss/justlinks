@@ -2,16 +2,29 @@ import type { EdgeClickEvent } from "../shared/edge.js";
 import { toEdgeLink } from "../shared/edge.js";
 import type { ClickEvent, SmartLink } from "../shared/types.js";
 
+const edgeWorkerSyncUrl = process.env.EDGE_WORKER_SYNC_URL?.replace(/\/+$/, "");
+const edgeSyncSecret = process.env.EDGE_SYNC_SECRET;
 const kvAccountId = process.env.CF_ACCOUNT_ID;
 const kvNamespaceId = process.env.CF_KV_NAMESPACE_ID;
 const kvApiToken = process.env.CF_API_TOKEN;
 
 export function isEdgeSyncConfigured(): boolean {
-  return Boolean(kvAccountId && kvNamespaceId && kvApiToken);
+  return Boolean((edgeWorkerSyncUrl && edgeSyncSecret) || (kvAccountId && kvNamespaceId && kvApiToken));
 }
 
 export async function syncLinkToEdge(link: SmartLink): Promise<void> {
   if (!isEdgeSyncConfigured()) return;
+  if (edgeWorkerSyncUrl && edgeSyncSecret) {
+    const edgeLink = toEdgeLink(link);
+    const response = await fetch(`${edgeWorkerSyncUrl}/links/${encodeURIComponent(edgeLink.slug)}`, {
+      method: "PUT",
+      headers: edgeWorkerHeaders(),
+      body: JSON.stringify(edgeLink)
+    });
+    await assertSyncOk(response, `sync ${edgeLink.slug}`);
+    return;
+  }
+
   const response = await fetch(kvUrl(`link:${link.slug}`), {
     method: "PUT",
     headers: kvHeaders(),
@@ -22,6 +35,15 @@ export async function syncLinkToEdge(link: SmartLink): Promise<void> {
 
 export async function deleteLinkFromEdge(slug: string): Promise<void> {
   if (!isEdgeSyncConfigured()) return;
+  if (edgeWorkerSyncUrl && edgeSyncSecret) {
+    const response = await fetch(`${edgeWorkerSyncUrl}/links/${encodeURIComponent(slug)}`, {
+      method: "DELETE",
+      headers: edgeWorkerHeaders()
+    });
+    await assertSyncOk(response, `delete ${slug}`);
+    return;
+  }
+
   const response = await fetch(kvUrl(`link:${slug}`), {
     method: "DELETE",
     headers: kvHeaders()
@@ -31,6 +53,16 @@ export async function deleteLinkFromEdge(slug: string): Promise<void> {
 
 export async function syncLinksToEdge(links: SmartLink[]): Promise<{ synced: number; configured: boolean }> {
   if (!isEdgeSyncConfigured()) return { synced: 0, configured: false };
+  if (edgeWorkerSyncUrl && edgeSyncSecret) {
+    const response = await fetch(`${edgeWorkerSyncUrl}/sync`, {
+      method: "POST",
+      headers: edgeWorkerHeaders(),
+      body: JSON.stringify({ links: links.map(toEdgeLink) })
+    });
+    await assertSyncOk(response, "full sync");
+    return { synced: links.length, configured: true };
+  }
+
   await Promise.all(links.map((link) => syncLinkToEdge(link)));
   return { synced: links.length, configured: true };
 }
@@ -59,6 +91,18 @@ function kvHeaders(): HeadersInit {
     Authorization: `Bearer ${kvApiToken}`,
     "Content-Type": "application/json"
   };
+}
+
+function edgeWorkerHeaders(): HeadersInit {
+  return {
+    Authorization: `Bearer ${edgeSyncSecret}`,
+    "Content-Type": "application/json"
+  };
+}
+
+async function assertSyncOk(response: Response, action: string): Promise<void> {
+  if (response.ok) return;
+  throw new Error(`Edge Worker ${action} failed: ${response.status} ${await response.text()}`);
 }
 
 async function assertCloudflareOk(response: Response, action: string): Promise<void> {

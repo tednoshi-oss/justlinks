@@ -34,11 +34,17 @@ interface MessageBatch<T = unknown> {
 
 interface KVNamespace {
   get<T = string>(key: string, options?: { type?: "json" | "text" }): Promise<T | null>;
+  put(key: string, value: string): Promise<void>;
+  delete(key: string): Promise<void>;
 }
 
 export default {
   async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname.startsWith("/__edge/")) {
+      return handleEdgeSyncRequest(request, env, url);
+    }
 
     if (isDashboardPath(url.pathname)) {
       if (url.pathname === "/") return Response.redirect(`${url.origin}/dashboard/links`, 302);
@@ -68,6 +74,38 @@ export default {
     await sendClickBatchToDashboard(batch.messages.map((message) => message.body), env);
   }
 };
+
+async function handleEdgeSyncRequest(request: Request, env: Env, url: URL): Promise<Response> {
+  if (!isAuthorizedEdgeRequest(request, env)) return jsonResponse({ error: "Unauthorized edge request." }, 401);
+
+  if (request.method === "PUT" && url.pathname.startsWith("/__edge/links/")) {
+    const pathSlug = decodeURIComponent(url.pathname.replace("/__edge/links/", ""));
+    const link = await readJson<EdgeLinkConfig>(request);
+    if (!link?.slug || link.slug !== pathSlug) return jsonResponse({ error: "Invalid link payload." }, 400);
+    await env.JUSTLINKS_LINKS.put(`link:${link.slug}`, JSON.stringify(link));
+    return jsonResponse({ ok: true, synced: 1 });
+  }
+
+  if (request.method === "DELETE" && url.pathname.startsWith("/__edge/links/")) {
+    const slug = decodeURIComponent(url.pathname.replace("/__edge/links/", ""));
+    if (!slug) return jsonResponse({ error: "Missing slug." }, 400);
+    await env.JUSTLINKS_LINKS.delete(`link:${slug}`);
+    return jsonResponse({ ok: true, deleted: 1 });
+  }
+
+  if (request.method === "POST" && url.pathname === "/__edge/sync") {
+    const body = await readJson<{ links?: EdgeLinkConfig[] }>(request);
+    const links = Array.isArray(body?.links) ? body.links : [];
+    await Promise.all(
+      links
+        .filter((link) => link?.slug)
+        .map((link) => env.JUSTLINKS_LINKS.put(`link:${link.slug}`, JSON.stringify(link)))
+    );
+    return jsonResponse({ ok: true, synced: links.length });
+  }
+
+  return jsonResponse({ error: "Not found." }, 404);
+}
 
 async function getEdgeLink(slug: string, env: Env): Promise<EdgeLinkConfig | null> {
   const cached = await env.JUSTLINKS_LINKS.get<EdgeLinkConfig>(`link:${slug}`, { type: "json" });
@@ -130,6 +168,26 @@ function proxyDashboard(request: Request, env: Env): Promise<Response> {
   headers.set("x-forwarded-host", new URL(request.url).host);
 
   return fetch(new Request(incoming, { method: request.method, headers, body: request.body, redirect: "manual" }));
+}
+
+function isAuthorizedEdgeRequest(request: Request, env: Env): boolean {
+  const provided = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  return Boolean(env.EDGE_SYNC_SECRET && provided === env.EDGE_SYNC_SECRET);
+}
+
+async function readJson<T>(request: Request): Promise<T | null> {
+  try {
+    return (await request.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json; charset=utf-8" }
+  });
 }
 
 function notFound(): Response {
