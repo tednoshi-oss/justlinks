@@ -1,0 +1,1233 @@
+import {
+  Activity,
+  BarChart3,
+  ChevronDown,
+  Copy,
+  Download,
+  Edit3,
+  Filter,
+  Info,
+  LayoutDashboard,
+  Link2,
+  Menu,
+  MoreHorizontal,
+  MousePointerClick,
+  Plus,
+  RefreshCcw,
+  Search,
+  Sparkles,
+  Trash2,
+  X
+} from "lucide-react";
+import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { api } from "./api";
+import type { AnalyticsPayload, BreakdownPoint, ClickEvent, DashboardSummary, LinkGroup, LinkWithStats, SmartLink } from "../shared/types";
+
+type View = "dashboard" | "links" | "analytics";
+type SortMode = "newest" | "oldest" | "most-clicks" | "least-clicks" | "name-asc" | "name-desc";
+
+const blankAnalytics: AnalyticsPayload = {
+  clicksOverTime: [],
+  deviceBreakdown: [],
+  countryBreakdown: [],
+  referrerBreakdown: [],
+  browserBreakdown: [],
+  dailyBreakdown: [],
+  linkPerformance: [],
+  recentEvents: []
+};
+
+const initialGroups: LinkGroup[] = [
+  { id: "campaign", name: "Campaign", color: "#6366f1" },
+  { id: "mobile", name: "Mobile", color: "#06b6d4" },
+  { id: "referral", name: "Referral", color: "#22c55e" },
+  { id: "press", name: "Press", color: "#ec4899" }
+];
+
+export function App() {
+  const [view, setView] = useState<View>(() => currentView());
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [links, setLinks] = useState<LinkWithStats[]>([]);
+  const [analytics, setAnalytics] = useState<AnalyticsPayload>(blankAnalytics);
+  const [days, setDays] = useState(30);
+  const [query, setQuery] = useState("");
+  const [sortMode, setSortMode] = useState<SortMode>("newest");
+  const [groupFilter, setGroupFilter] = useState<string | null>(null);
+  const [groups, setGroups] = useState<LinkGroup[]>(initialGroups);
+  const [isCreateOpen, setCreateOpen] = useState(false);
+  const [isGroupOpen, setGroupOpen] = useState(false);
+  const [editingLink, setEditingLink] = useState<LinkWithStats | null>(null);
+  const [statsLink, setStatsLink] = useState<LinkWithStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onPopState = () => setView(currentView());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  useEffect(() => {
+    void refresh(days);
+  }, [days]);
+
+  async function refresh(nextDays = days) {
+    try {
+      setLoading(true);
+      setError(null);
+      const [summaryData, linksData, analyticsData, groupsData] = await Promise.all([
+        api.summary(),
+        api.links(),
+        api.analytics(nextDays),
+        api.groups()
+      ]);
+      setSummary(summaryData);
+      setLinks(linksData);
+      setAnalytics(analyticsData);
+      setGroups(groupsData.length ? groupsData : initialGroups);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to load dashboard.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function navigate(nextView: View) {
+    const path = nextView === "dashboard" ? "/dashboard" : `/dashboard/${nextView}`;
+    window.history.pushState({}, "", path);
+    setView(nextView);
+  }
+
+  async function saveLink(payload: Partial<SmartLink>) {
+    if (editingLink) {
+      await api.updateLink(editingLink.id, payload);
+      setEditingLink(null);
+    } else {
+      await api.createLink(payload);
+      setCreateOpen(false);
+    }
+    await refresh();
+  }
+
+  async function removeLink(link: LinkWithStats) {
+    if (!window.confirm("Are you sure you want to delete this link?")) return;
+    await api.deleteLink(link.id);
+    await refresh();
+  }
+
+  async function assignGroup(link: LinkWithStats, groupId: string | null) {
+    await api.updateLink(link.id, { groupId });
+    await refresh();
+  }
+
+  async function createGroup(name: string, color: string) {
+    const clean = name.trim();
+    if (!clean) return;
+    const group = await api.createGroup({ name: clean, color });
+    setGroups((current) => [...current, group]);
+    setGroupOpen(false);
+  }
+
+  const filteredLinks = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const selectedGroup = groups.find((group) => group.id === groupFilter);
+    const result = links.filter((link) => {
+      const groupMatch =
+        !selectedGroup ||
+        link.groupId === selectedGroup.id ||
+        link.tags.some((tag) => tag.toLowerCase() === selectedGroup.name.toLowerCase());
+      const text = `${link.name} ${link.slug} ${link.fallbackUrl} ${link.description} ${link.tags.join(" ")}`.toLowerCase();
+      return groupMatch && (!needle || text.includes(needle));
+    });
+
+    result.sort((a, b) => {
+      if (sortMode === "oldest") return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      if (sortMode === "most-clicks") return b.clicks - a.clicks;
+      if (sortMode === "least-clicks") return a.clicks - b.clicks;
+      if (sortMode === "name-asc") return a.name.localeCompare(b.name);
+      if (sortMode === "name-desc") return b.name.localeCompare(a.name);
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    return result;
+  }, [groupFilter, groups, links, query, sortMode]);
+
+  return (
+    <div className="app-shell">
+      <Sidebar active={view} onNavigate={navigate} />
+
+      <main className="workspace">
+        <Header
+          title={viewTitle(view)}
+          subtitle={viewSubtitle(view)}
+          action={view === "analytics" ? <ExportButton analytics={analytics} /> : null}
+        />
+
+        {error ? <div className="notice error">{error}</div> : null}
+        {loading && !summary ? <Skeleton /> : null}
+
+        {!loading || summary ? (
+          <>
+            {view === "dashboard" ? <DashboardView summary={summary} analytics={analytics} /> : null}
+            {view === "links" ? (
+              <LinksView
+                links={filteredLinks}
+                allLinks={links}
+                groups={groups}
+                selectedGroup={groupFilter}
+                query={query}
+                sortMode={sortMode}
+                onQueryChange={setQuery}
+                onSortChange={setSortMode}
+                onGroupSelect={setGroupFilter}
+                onCreateGroup={() => setGroupOpen(true)}
+                onCreate={() => setCreateOpen(true)}
+                onEdit={setEditingLink}
+                onDelete={(link) => void removeLink(link)}
+                onAssignGroup={(link, groupId) => void assignGroup(link, groupId)}
+                onStats={setStatsLink}
+                onRefresh={() => void refresh()}
+              />
+            ) : null}
+            {view === "analytics" ? <AnalyticsView analytics={analytics} days={days} onDaysChange={setDays} /> : null}
+          </>
+        ) : null}
+      </main>
+
+      {isCreateOpen || editingLink ? (
+        <LinkModal
+          editLink={editingLink}
+          onClose={() => {
+            setCreateOpen(false);
+            setEditingLink(null);
+          }}
+          onSubmit={saveLink}
+        />
+      ) : null}
+      {statsLink ? <StatsModal link={statsLink} events={analytics.recentEvents} onClose={() => setStatsLink(null)} /> : null}
+      {isGroupOpen ? <GroupModal onClose={() => setGroupOpen(false)} onSubmit={createGroup} /> : null}
+    </div>
+  );
+}
+
+function Sidebar({ active, onNavigate }: { active: View; onNavigate: (view: View) => void }) {
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  function navigateMobile(view: View) {
+    onNavigate(view);
+    setMobileOpen(false);
+  }
+
+  return (
+    <>
+      <aside className="sidebar desktop-sidebar" aria-label="Primary">
+        <Brand />
+        <NavList active={active} onNavigate={onNavigate} />
+        <div className="sidebar-footer">
+          <span className="pulse-dot" />
+          <div>
+            <strong>Redirects online</strong>
+            <small>Edge-ready routing</small>
+          </div>
+        </div>
+      </aside>
+      <div className="mobile-bar">
+        <button className="icon-button ghost" type="button" title="Menu" aria-label="Menu" onClick={() => setMobileOpen((open) => !open)} aria-expanded={mobileOpen}>
+          <Menu size={20} />
+        </button>
+        <Brand compact />
+      </div>
+      {mobileOpen ? (
+        <div className="mobile-menu">
+          <NavList active={active} onNavigate={navigateMobile} />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function Brand({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={`brand ${compact ? "compact" : ""}`}>
+      <div className="brand-mark">
+        <Link2 size={compact ? 18 : 22} />
+      </div>
+      <span>JustLinks</span>
+    </div>
+  );
+}
+
+function NavList({ active, onNavigate }: { active: View; onNavigate: (view: View) => void }) {
+  return (
+    <nav className="nav-list">
+      <NavButton active={active === "dashboard"} icon={<LayoutDashboard size={18} />} label="Dashboard" onClick={() => onNavigate("dashboard")} />
+      <NavButton active={active === "links"} icon={<Link2 size={18} />} label="Links" onClick={() => onNavigate("links")} />
+      <NavButton active={active === "analytics"} icon={<BarChart3 size={18} />} label="Analytics" onClick={() => onNavigate("analytics")} />
+    </nav>
+  );
+}
+
+function Header({ title, subtitle, action }: { title: string; subtitle: string; action: ReactNode }) {
+  return (
+    <header className="page-header">
+      <div>
+        <h1>{title}</h1>
+        <p>{subtitle}</p>
+      </div>
+      {action ? <div className="header-actions">{action}</div> : null}
+    </header>
+  );
+}
+
+function DashboardView({ summary, analytics }: { summary: DashboardSummary | null; analytics: AnalyticsPayload }) {
+  const data = summary || {
+    totalClicks: 0,
+    activeLinks: 0,
+    uniqueVisitors: 0,
+    deepLinkRate: 0,
+    trend: [],
+    topLinks: [],
+    recentEvents: []
+  };
+  const staleLinks = data.topLinks.filter((link) => link.clicks === 0).concat(data.topLinks.length ? [] : []);
+
+  return (
+    <section className="page-content">
+      <div className="stat-grid five">
+        <StatCard title="Total Clicks" value={data.totalClicks} change="+18% from last week" changeType="positive" icon={<MousePointerClick />} />
+        <StatCard title="Unique Clicks" value={data.uniqueVisitors} icon={<Activity />} />
+        <StatCard title="Active Links" value={data.activeLinks} icon={<Link2 />} />
+        <StatCard title="Today's Clicks" value={todayValue(data.trend)} change={`${Math.max(1, Math.floor(todayValue(data.trend) * 0.72))} unique`} icon={<Sparkles />} />
+        <StatCard title="Unique Regions" value={analytics.countryBreakdown.length || 0} icon={<Filter />} />
+      </div>
+
+      <div className="dashboard-grid">
+        <Panel title="Clicks Over Time">
+          <LineChart points={data.trend} />
+        </Panel>
+        <Panel title="Top Performing Links">
+          <RankedLinks links={data.topLinks} />
+        </Panel>
+      </div>
+
+      <Panel
+        title="Needs Attention"
+        aside={
+          <select className="select compact" defaultValue="3">
+            <option value="1">Last 1 day</option>
+            <option value="2">Last 2 days</option>
+            <option value="3">Last 3 days</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+          </select>
+        }
+        icon={<Info size={18} />}
+      >
+        {staleLinks.length ? (
+          <div className="attention-list">
+            {staleLinks.map((link) => (
+              <div className="attention-row" key={link.id}>
+                <Link2 size={16} />
+                <div>
+                  <strong>{link.name}</strong>
+                  <small>{link.description || "No clicks in the selected period"}</small>
+                </div>
+                <span>No clicks ever</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-message">All links are performing well - no attention needed.</div>
+        )}
+      </Panel>
+
+      <Panel title="All Links Performance">
+        <div className="performance-list">
+          {analytics.linkPerformance.map((link) => (
+            <div className="performance-row" key={link.id}>
+              <div>
+                <strong>{link.name}</strong>
+                <small>{link.fallbackUrl}</small>
+              </div>
+              <span>{formatNumber(link.clicks)} clicks</span>
+              <span>{formatNumber(link.uniqueVisitors)} unique</span>
+              <TypeBadge deep={isDeepLink(link)} />
+            </div>
+          ))}
+        </div>
+      </Panel>
+    </section>
+  );
+}
+
+function LinksView({
+  links,
+  allLinks,
+  groups,
+  selectedGroup,
+  query,
+  sortMode,
+  onQueryChange,
+  onSortChange,
+  onGroupSelect,
+  onCreateGroup,
+  onCreate,
+  onEdit,
+  onDelete,
+  onAssignGroup,
+  onStats,
+  onRefresh
+}: {
+  links: LinkWithStats[];
+  allLinks: LinkWithStats[];
+  groups: LinkGroup[];
+  selectedGroup: string | null;
+  query: string;
+  sortMode: SortMode;
+  onQueryChange: (value: string) => void;
+  onSortChange: (value: SortMode) => void;
+  onGroupSelect: (value: string | null) => void;
+  onCreateGroup: () => void;
+  onCreate: () => void;
+  onEdit: (link: LinkWithStats) => void;
+  onDelete: (link: LinkWithStats) => void;
+  onAssignGroup: (link: LinkWithStats, groupId: string | null) => void;
+  onStats: (link: LinkWithStats) => void;
+  onRefresh: () => void;
+}) {
+  const normalCount = allLinks.filter((link) => !isDeepLink(link)).length;
+  const deepCount = allLinks.filter(isDeepLink).length;
+
+  return (
+    <section className="page-content">
+      <div className="links-toolbar">
+        <div>
+          <h2>All Links</h2>
+          <div className="count-line">
+            <span>{normalCount}/∞ links</span>
+            <span>•</span>
+            <span>{deepCount}/∞ deep links</span>
+          </div>
+        </div>
+        <div className="toolbar-actions">
+          <label className="search-field">
+            <Search size={16} />
+            <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search links..." />
+          </label>
+          <SortMenu value={sortMode} onChange={onSortChange} />
+          <button className="button primary" type="button" onClick={onCreate}>
+            <Plus size={16} />
+            Create Link
+          </button>
+        </div>
+      </div>
+
+      <GroupBar groups={groups} selectedGroup={selectedGroup} onSelect={onGroupSelect} onCreate={onCreateGroup} />
+
+      <section className="links-table">
+        <div className="links-table-head">
+          <span>Link</span>
+          <span>Clicks</span>
+          <span>Type</span>
+          <span>Actions</span>
+        </div>
+        <div className="links-table-body">
+          {links.length ? (
+            links.map((link) => (
+              <LinkRow
+                key={link.id}
+                link={link}
+                groups={groups}
+                onEdit={() => onEdit(link)}
+                onDelete={() => onDelete(link)}
+                onAssignGroup={(groupId) => onAssignGroup(link, groupId)}
+                onStats={() => onStats(link)}
+                onRefresh={onRefresh}
+              />
+            ))
+          ) : (
+            <div className="empty-message table-empty">No links match your search.</div>
+          )}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function AnalyticsView({ analytics, days, onDaysChange }: { analytics: AnalyticsPayload; days: number; onDaysChange: (days: number) => void }) {
+  const total = analytics.clicksOverTime.reduce((sum, point) => sum + point.value, 0);
+  const unique = analytics.linkPerformance.reduce((sum, link) => sum + link.uniqueVisitors, 0);
+  const week = analytics.clicksOverTime.slice(-7).reduce((sum, point) => sum + point.value, 0);
+  const month = analytics.clicksOverTime.reduce((sum, point) => sum + point.value, 0);
+
+  return (
+    <section className="page-content">
+      <div className="date-toolbar">
+        <select className="select" value={days} onChange={(event) => onDaysChange(Number(event.target.value))}>
+          <option value={1}>Today</option>
+          <option value={7}>Last 7 Days</option>
+          <option value={14}>Last 14 Days</option>
+          <option value={30}>Last 30 Days</option>
+          <option value={90}>Last 90 Days</option>
+        </select>
+      </div>
+
+      <div className="stat-grid">
+        <SmallMetric label="Total Clicks" value={total} detail={`${unique} unique`} />
+        <SmallMetric label="Today" value={todayValue(analytics.clicksOverTime)} detail="latest daily count" accent />
+        <SmallMetric label="This Week" value={week} detail="rolling 7 days" />
+        <SmallMetric label="This Month" value={month} detail="selected range" />
+      </div>
+
+      <div className="dashboard-grid">
+        <Panel title={`Clicks Over Time (${daysLabel(days)})`}>
+          <LineChart points={analytics.clicksOverTime} />
+        </Panel>
+        <Panel title="Top Regions">
+          <BreakdownList points={analytics.countryBreakdown} />
+        </Panel>
+      </div>
+
+      <div className="dashboard-grid">
+        <Panel title="Devices">
+          <BreakdownList points={analytics.deviceBreakdown} />
+        </Panel>
+        <Panel title="Browsers">
+          <BreakdownList points={analytics.browserBreakdown} />
+        </Panel>
+      </div>
+
+      <Panel title="Daily Breakdown">
+        <DailyBreakdownTable rows={analytics.dailyBreakdown} />
+      </Panel>
+    </section>
+  );
+}
+
+function SortMenu({ value, onChange }: { value: SortMode; onChange: (value: SortMode) => void }) {
+  const [open, setOpen] = useState(false);
+  const selected = sortOptions.find((option) => option.value === value) || sortOptions[0];
+
+  function choose(next: SortMode) {
+    onChange(next);
+    setOpen(false);
+  }
+
+  return (
+    <div className="sort-menu">
+      <button className="select-button" type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <Filter size={16} />
+        {selected.label}
+        <ChevronDown size={15} />
+      </button>
+      {open ? (
+        <div className="dropdown-menu sort-dropdown" role="menu">
+          <span>Sort by</span>
+          <button type="button" role="menuitem" onClick={() => choose("newest")}>Newest First</button>
+          <button type="button" role="menuitem" onClick={() => choose("oldest")}>Oldest First</button>
+          <span>By Performance</span>
+          <button type="button" role="menuitem" onClick={() => choose("most-clicks")}>Most Clicks</button>
+          <button type="button" role="menuitem" onClick={() => choose("least-clicks")}>Least Clicks</button>
+          <span>By Name</span>
+          <button type="button" role="menuitem" onClick={() => choose("name-asc")}>Name A-Z</button>
+          <button type="button" role="menuitem" onClick={() => choose("name-desc")}>Name Z-A</button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const sortOptions: { value: SortMode; label: string }[] = [
+  { value: "newest", label: "Newest First" },
+  { value: "oldest", label: "Oldest First" },
+  { value: "most-clicks", label: "Most Clicks" },
+  { value: "least-clicks", label: "Least Clicks" },
+  { value: "name-asc", label: "Name A-Z" },
+  { value: "name-desc", label: "Name Z-A" }
+];
+
+function GroupBar({ groups, selectedGroup, onSelect, onCreate }: { groups: LinkGroup[]; selectedGroup: string | null; onSelect: (id: string | null) => void; onCreate: () => void }) {
+  return (
+    <div className="group-bar">
+      <button className={`group-chip ${selectedGroup === null ? "active" : ""}`} type="button" onClick={() => onSelect(null)}>
+        All
+      </button>
+      {groups.map((group) => (
+        <button
+          className={`group-chip color ${selectedGroup === group.id ? "active" : ""}`}
+          style={{ "--chip-color": group.color } as CSSProperties}
+          type="button"
+          key={group.id}
+          onClick={() => onSelect(selectedGroup === group.id ? null : group.id)}
+        >
+          <span />
+          {group.name}
+        </button>
+      ))}
+      <button className="group-chip dashed" type="button" onClick={onCreate}>
+        <Plus size={13} />
+        New Group
+      </button>
+    </div>
+  );
+}
+
+const groupColors = ["#6366f1", "#8b5cf6", "#ec4899", "#ef4444", "#fb923c", "#facc15", "#22c55e", "#67e8f9"];
+
+function GroupModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (name: string, color: string) => Promise<void> }) {
+  const [name, setName] = useState("");
+  const [color, setColor] = useState(groupColors[0]);
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      await onSubmit(name, color);
+    } catch (error) {
+      console.error(error);
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form className="modal group-modal" onSubmit={(event) => void submit(event)}>
+        <div className="modal-header">
+          <h2>Create Group</h2>
+          <button className="icon-button ghost" type="button" title="Close" aria-label="Close" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+        <label className="field">
+          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Instagram, TikTok, Clients..." autoFocus />
+        </label>
+        <div className="color-row">
+          <span>Color:</span>
+          {groupColors.map((swatch) => (
+            <button
+              key={swatch}
+              className={swatch === color ? "active" : ""}
+              type="button"
+              aria-label={`Select ${swatch}`}
+              style={{ "--chip-color": swatch } as CSSProperties}
+              onClick={() => setColor(swatch)}
+            />
+          ))}
+        </div>
+        <div className="modal-actions">
+          <button className="button outline" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="button primary" type="submit" disabled={!name.trim() || saving}>
+            Create
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function LinkRow({
+  link,
+  groups,
+  onEdit,
+  onDelete,
+  onAssignGroup,
+  onStats,
+  onRefresh
+}: {
+  link: LinkWithStats;
+  groups: LinkGroup[];
+  onEdit: () => void;
+  onDelete: () => void;
+  onAssignGroup: (groupId: string | null) => void;
+  onStats: () => void;
+  onRefresh: () => void;
+}) {
+  const href = `${window.location.origin}/${link.slug}`;
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [groupMenuOpen, setGroupMenuOpen] = useState(false);
+  const manualCopyRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (copyState !== "failed") return;
+    manualCopyRef.current?.focus();
+    manualCopyRef.current?.select();
+  }, [copyState]);
+
+  async function copyLink() {
+    const copied = await copyTextToClipboard(href);
+    setCopyState(copied ? "copied" : "failed");
+    if (copied) {
+      window.setTimeout(() => {
+        setCopyState((current) => (current === "copied" ? "idle" : current));
+      }, 2200);
+    }
+  }
+
+  function withClosedMenu(action: () => void) {
+    setMenuOpen(false);
+    setGroupMenuOpen(false);
+    action();
+  }
+
+  return (
+    <article className="link-row">
+      <div className="link-main">
+        <button className="row-link-copy" type="button" title={`Copy ${href}`} aria-label={`Copy ${shortCode(link.slug)}`} onClick={() => void copyLink()}>
+          <Link2 size={16} />
+        </button>
+        <div className="link-main-text">
+          <strong>{link.name}</strong>
+          <small>{link.fallbackUrl}</small>
+          {copyState !== "idle" ? <span className={`copy-feedback ${copyState}`}>{copyState === "copied" ? "Copied" : "Select link below"}</span> : null}
+          {copyState === "failed" ? (
+            <label className="manual-copy">
+              <span>Copy manually</span>
+              <input ref={manualCopyRef} readOnly value={href} onFocus={(event) => event.currentTarget.select()} />
+            </label>
+          ) : null}
+        </div>
+      </div>
+      <div className="click-cell">
+        <strong>{formatNumber(link.clicks)}</strong>
+        <small>clicks</small>
+      </div>
+      <TypeBadge deep={isDeepLink(link)} />
+      <div className="row-actions">
+        <button className="icon-button ghost" type="button" title="View stats" aria-label={`View stats for ${link.name}`} onClick={onStats}>
+          <BarChart3 size={16} />
+        </button>
+        <button className="icon-button ghost" type="button" title="Refresh stats" aria-label={`Refresh stats for ${link.name}`} onClick={onRefresh}>
+          <RefreshCcw size={16} />
+        </button>
+        <button className="icon-button ghost more" type="button" title="More" aria-label={`More actions for ${link.name}`} onClick={() => setMenuOpen((open) => !open)} aria-expanded={menuOpen}>
+          <MoreHorizontal size={16} />
+        </button>
+        {menuOpen ? (
+          <div className="row-menu">
+            <button type="button" aria-label={`Edit from menu ${link.name}`} onClick={() => withClosedMenu(onEdit)}>
+              <Edit3 size={15} />
+              Edit
+            </button>
+            <button type="button" aria-label={`Copy Link for ${link.name}`} onClick={() => void copyLink()}>
+              <Copy size={15} />
+              Copy Link
+            </button>
+            <button type="button" aria-label={`Group ${link.name}`} onClick={() => setGroupMenuOpen((open) => !open)} aria-expanded={groupMenuOpen}>
+              <Filter size={15} />
+              Group
+            </button>
+            {groupMenuOpen ? (
+              <div className="row-submenu">
+                <button type="button" onClick={() => withClosedMenu(() => onAssignGroup(null))}>No group</button>
+                {groups.map((group) => (
+                  <button type="button" key={group.id} onClick={() => withClosedMenu(() => onAssignGroup(group.id))}>
+                    <span style={{ "--chip-color": group.color } as CSSProperties} />
+                    {group.name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <button type="button" className="danger" aria-label={`Delete from menu ${link.name}`} onClick={() => withClosedMenu(onDelete)}>
+              <Trash2 size={15} />
+              Delete
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | null; onClose: () => void; onSubmit: (payload: Partial<SmartLink>) => Promise<void> }) {
+  const isEdit = Boolean(editLink);
+  const [title, setTitle] = useState(editLink?.name || "");
+  const [destinationUrl, setDestinationUrl] = useState(editLink?.fallbackUrl || "");
+  const [notes, setNotes] = useState(editLink?.description || "");
+  const [shortCode, setShortCode] = useState(editLink?.slug || "");
+  const [customCode, setCustomCode] = useState(Boolean(editLink));
+  const [deepLink, setDeepLink] = useState(editLink ? isDeepLink(editLink) : true);
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    const cleanedSlug = customCode && shortCode ? normalizeShortCode(shortCode, deepLink) : undefined;
+    try {
+      await onSubmit({
+        name: title,
+        slug: cleanedSlug,
+        description: notes,
+        fallbackUrl: destinationUrl,
+        webUrl: destinationUrl,
+        iosUrl: deepLink ? destinationUrl : "",
+        androidUrl: deepLink ? destinationUrl : "",
+        deepLinkPath: "",
+        tags: inferTags(notes, title),
+        isDeepLink: deepLink
+      } as Partial<SmartLink>);
+    } catch (error) {
+      console.error(error);
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form className="modal" onSubmit={(event) => void submit(event)}>
+        <div className="modal-header">
+          <h2>{isEdit ? "Edit Link" : "Create New Link"}</h2>
+          <button className="icon-button ghost" type="button" title="Close" aria-label="Close" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <label className="field">
+          <span>Title</span>
+          <input required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="My awesome link" />
+        </label>
+
+        <label className="field">
+          <span>Destination URL</span>
+          <input required type="url" value={destinationUrl} onChange={(event) => setDestinationUrl(event.target.value)} placeholder="https://example.com" />
+        </label>
+
+        <div className="field">
+          <div className="field-row">
+            <span>Short Code</span>
+            {!isEdit ? (
+              <div className="tiny-toggle">
+                <button type="button" className={!customCode ? "active" : ""} onClick={() => setCustomCode(false)}>
+                  Random
+                </button>
+                <button type="button" className={customCode ? "active" : ""} onClick={() => setCustomCode(true)}>
+                  Custom
+                </button>
+              </div>
+            ) : null}
+          </div>
+          {customCode || isEdit ? (
+            <div className="short-input-row">
+              <span>{window.location.host}/</span>
+              <input value={shortCode} onChange={(event) => setShortCode(event.target.value.replace(/[^a-zA-Z0-9_-]/g, ""))} placeholder="my-link" />
+              <button className="icon-button" type="button" title="Generate random code" aria-label="Generate random code" onClick={() => setShortCode(randomCode(deepLink))}>
+                <Sparkles size={15} />
+              </button>
+            </div>
+          ) : (
+            <p className="help-text">A random 8-character code will be generated automatically.</p>
+          )}
+        </div>
+
+        <label className="field">
+          <span>Notes (optional)</span>
+          <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={2} placeholder="Add some notes about this link..." />
+        </label>
+
+        <div className="settings-box">
+          <p>Link Settings</p>
+          <div className="setting-row">
+            <div>
+              <strong>Deep Link (Safari/Chrome Escape)</strong>
+              <small>{deepLink ? "Links will auto-open in Safari/Chrome from social apps." : "Links will open normally inside in-app browsers."}</small>
+            </div>
+            <button className={`switch ${deepLink ? "on" : ""}`} type="button" onClick={() => !isEdit && setDeepLink((value) => !value)} aria-pressed={deepLink} disabled={isEdit}>
+              <span />
+            </button>
+          </div>
+          {isEdit ? <small className="warning-text">Locked - create a new link to change this setting.</small> : null}
+        </div>
+
+        <div className="modal-actions">
+          <button className="button outline" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="button primary" type="submit" disabled={saving}>
+            {saving ? "Saving..." : isEdit ? "Update Link" : "Create Link"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function StatsModal({ link, events, onClose }: { link: LinkWithStats; events: ClickEvent[]; onClose: () => void }) {
+  const linkEvents = events.filter((event) => event.linkId === link.id || event.slug === link.slug);
+  const scopedEvents = linkEvents.length ? linkEvents : events.filter((event) => event.slug === link.slug);
+  const series = buildEventSeries(scopedEvents, 14);
+  const countries = breakdownFromEvents(scopedEvents.map((event) => event.country));
+  const devices = breakdownFromEvents(scopedEvents.map((event) => event.device));
+  const browsers = breakdownFromEvents(scopedEvents.map((event) => event.browser || "Unknown"));
+  const thisWeek = scopedEvents.filter((event) => Date.now() - new Date(event.occurredAt).getTime() <= 7 * 24 * 60 * 60 * 1000).length;
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal stats-modal">
+        <div className="modal-header">
+          <h2>
+            <BarChart3 size={20} />
+            Stats for "{link.name}"
+          </h2>
+          <div className="modal-header-actions">
+            <button className="button outline" type="button">
+              <Download size={15} />
+              Export
+            </button>
+            <select className="select compact" defaultValue="14">
+              <option value="14">Last 14 Days</option>
+              <option value="30">Last 30 Days</option>
+              <option value="90">Last 90 Days</option>
+            </select>
+          </div>
+          <button className="icon-button ghost" type="button" title="Close" aria-label="Close" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+        <div className="stat-grid">
+          <SmallMetric label="Clicks" value={link.clicks} detail="all time" />
+          <SmallMetric label="Unique" value={link.uniqueVisitors} detail="visitors" />
+          <SmallMetric label="Today" value={todayValue(series)} detail="latest daily count" accent />
+          <SmallMetric label="This Week" value={thisWeek} detail="rolling 7 days" />
+        </div>
+        <Panel title="Clicks Over Time" icon={<Activity size={16} />}>
+          <LineChart points={series} />
+        </Panel>
+        <div className="dashboard-grid">
+          <Panel title="Top Regions">
+            <BreakdownList points={countries} />
+          </Panel>
+          <Panel title="Devices">
+            <BreakdownList points={devices} />
+          </Panel>
+        </div>
+        <Panel title="Browsers">
+          <BreakdownList points={browsers} />
+        </Panel>
+      </section>
+    </div>
+  );
+}
+
+function StatCard({ title, value, change, changeType = "neutral", icon }: { title: string; value: number | string; change?: string; changeType?: "positive" | "negative" | "neutral"; icon: ReactNode }) {
+  return (
+    <section className="stat-card">
+      <div>
+        <p>{title}</p>
+        <strong>{typeof value === "number" ? value.toLocaleString() : value}</strong>
+        {change ? <small className={changeType}>{change}</small> : null}
+      </div>
+      <span>{icon}</span>
+    </section>
+  );
+}
+
+function SmallMetric({ label, value, detail, accent = false }: { label: string; value: number; detail: string; accent?: boolean }) {
+  return (
+    <section className="small-metric">
+      <p>{label}</p>
+      <strong className={accent ? "accent" : ""}>{formatNumber(value)}</strong>
+      <small>{detail}</small>
+    </section>
+  );
+}
+
+function Panel({ title, children, aside, icon }: { title: string; children: ReactNode; aside?: ReactNode; icon?: ReactNode }) {
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          {icon}
+          <h2>{title}</h2>
+        </div>
+        {aside}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function RankedLinks({ links }: { links: LinkWithStats[] }) {
+  if (!links.length) return <div className="empty-message">No links yet</div>;
+  return (
+    <div className="ranked-list">
+      {links.map((link, index) => (
+        <div className="ranked-row" key={link.id}>
+          <span>{index + 1}</span>
+          <strong>{link.name}</strong>
+          <code>{formatNumber(link.clicks)}</code>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BreakdownList({ points }: { points: BreakdownPoint[] }) {
+  if (!points.length) return <div className="empty-message">No data available</div>;
+  return (
+    <div className="breakdown-list">
+      {points.map((point) => (
+        <div className="breakdown-row" key={point.label}>
+          <div>
+            <strong>{point.label}</strong>
+            <span>{formatNumber(point.value)}</span>
+          </div>
+          <div className="bar-track">
+            <span style={{ width: `${Math.max(4, point.percentage)}%` }} />
+          </div>
+          <small>{point.percentage}%</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DailyBreakdownTable({ rows }: { rows: AnalyticsPayload["dailyBreakdown"] }) {
+  if (!rows.length) return <div className="empty-message">No daily activity yet.</div>;
+  return (
+    <div className="daily-table">
+      <div className="daily-head">
+        <span>Date</span>
+        <span>Clicks</span>
+        <span>Unique</span>
+      </div>
+      {rows.map((row) => (
+        <div className="daily-row" key={row.label}>
+          <span>{row.label}</span>
+          <strong>{formatNumber(row.clicks)}</strong>
+          <strong>{formatNumber(row.uniqueVisitors)}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LineChart({ points }: { points: { label: string; value: number }[] }) {
+  const max = Math.max(...points.map((point) => point.value), 1);
+  const width = 720;
+  const height = 280;
+  const step = points.length > 1 ? width / (points.length - 1) : width;
+  const coordinates = points.map((point, index) => {
+    const x = index * step;
+    const y = height - 30 - (point.value / max) * (height - 70);
+    return `${x},${y}`;
+  });
+
+  return (
+    <div className="chart">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Clicks over time" preserveAspectRatio="none">
+        {[0, 1, 2, 3].map((line) => (
+          <line key={line} x1="0" x2={width} y1={45 + line * 54} y2={45 + line * 54} />
+        ))}
+        <polyline points={coordinates.join(" ")} />
+        {coordinates.map((coordinate, index) => {
+          const [x, y] = coordinate.split(",").map(Number);
+          return <circle key={`${points[index]?.label}-${index}`} cx={x} cy={y} r="4" />;
+        })}
+      </svg>
+      <div className="chart-labels">
+        {points.filter((_, index) => index === 0 || index === points.length - 1 || index === Math.floor(points.length / 2)).map((point) => (
+          <span key={point.label}>{point.label}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EventTable({ events }: { events: ClickEvent[] }) {
+  if (!events.length) return <div className="empty-message">No click events yet.</div>;
+  return (
+    <div className="event-list">
+      {events.map((event) => (
+        <div className="event-row" key={event.id}>
+          <Activity size={15} />
+          <span>{shortCode(event.slug)}</span>
+          <strong>{event.device}</strong>
+          <span>{event.referrer}</span>
+          <small>{timeAgo(event.occurredAt)}</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TypeBadge({ deep }: { deep: boolean }) {
+  return (
+    <span className="type-badge">
+      <span className={deep ? "active" : ""} />
+      {deep ? "Deep Link" : "Normal"}
+    </span>
+  );
+}
+
+function ExportButton({ analytics }: { analytics: AnalyticsPayload }) {
+  function exportData() {
+    const rows = analytics.linkPerformance.map((link) => `${link.name},${link.slug},${link.clicks},${link.uniqueVisitors}`).join("\n");
+    const blob = new Blob([`Title,Short URL,Clicks,Unique\n${rows}`], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "analytics_report.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <button className="button outline" type="button" onClick={exportData}>
+      <Download size={16} />
+      Export to Excel
+    </button>
+  );
+}
+
+function NavButton({ active, icon, label, onClick }: { active: boolean; icon: ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button className={`nav-button ${active ? "active" : ""}`} type="button" onClick={onClick}>
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function Skeleton() {
+  return (
+    <div className="page-content">
+      <div className="stat-grid five">
+        {[0, 1, 2, 3, 4].map((item) => (
+          <div className="stat-card skeleton" key={item} />
+        ))}
+      </div>
+      <div className="panel skeleton large" />
+    </div>
+  );
+}
+
+function isDeepLink(link: LinkWithStats | SmartLink): boolean {
+  const explicit = (link as SmartLink).isDeepLink;
+  if (typeof explicit === "boolean") return explicit;
+  return link.slug.startsWith("d-") || Boolean(link.iosUrl || link.androidUrl);
+}
+
+function inferTags(notes: string, title: string): string[] {
+  const text = `${notes} ${title}`.toLowerCase();
+  const tags = ["campaign", "mobile", "referral", "press"].filter((tag) => text.includes(tag));
+  return tags.length ? tags : ["mobile"];
+}
+
+function normalizeShortCode(value: string, deep: boolean): string {
+  const clean = value.replace(/^\/+/, "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24);
+  if (deep && !clean.startsWith("d-")) return `d-${clean}`;
+  return clean;
+}
+
+function randomCode(deep = true): string {
+  const code = Math.random().toString(36).slice(2, 10);
+  return deep ? `d-${code}` : code;
+}
+
+function shortCode(slug: string): string {
+  return `/${slug}`;
+}
+
+function slugify(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function currentView(): View {
+  if (window.location.pathname.includes("/analytics")) return "analytics";
+  if (window.location.pathname.includes("/links")) return "links";
+  return "dashboard";
+}
+
+function viewTitle(view: View): string {
+  if (view === "links") return "Links";
+  if (view === "analytics") return "Analytics";
+  return "Dashboard";
+}
+
+function viewSubtitle(view: View): string {
+  if (view === "links") return "Manage your tracking links";
+  if (view === "analytics") return "Detailed performance metrics";
+  return "Overview of your link performance";
+}
+
+function daysLabel(days: number): string {
+  if (days === 1) return "Today";
+  return `Last ${days} Days`;
+}
+
+function todayValue(points: { value: number }[]): number {
+  return points[points.length - 1]?.value || 0;
+}
+
+function buildEventSeries(events: ClickEvent[], days: number) {
+  const points = new Map<string, number>();
+  for (let index = days - 1; index >= 0; index -= 1) {
+    const date = new Date(Date.now() - index * 24 * 60 * 60 * 1000);
+    points.set(date.toLocaleDateString("en", { month: "short", day: "numeric" }), 0);
+  }
+  for (const event of events) {
+    const label = new Date(event.occurredAt).toLocaleDateString("en", { month: "short", day: "numeric" });
+    if (points.has(label)) points.set(label, (points.get(label) || 0) + 1);
+  }
+  return Array.from(points.entries()).map(([label, value]) => ({ label, value }));
+}
+
+function breakdownFromEvents(labels: string[]): BreakdownPoint[] {
+  const total = labels.length || 1;
+  const counts = labels.reduce<Map<string, number>>((map, label) => {
+    map.set(label || "Unknown", (map.get(label || "Unknown") || 0) + 1);
+    return map;
+  }, new Map());
+  return Array.from(counts.entries())
+    .map(([label, value]) => ({ label, value, percentage: Math.round((value / total) * 100) }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 8);
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat("en", { notation: value >= 10000 ? "compact" : "standard" }).format(value);
+}
+
+function timeAgo(value: string): string {
+  const seconds = Math.max(1, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fall through to the textarea method for browsers with blocked clipboard permission.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "-9999px";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, text.length);
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}

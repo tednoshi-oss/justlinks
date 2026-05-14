@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: justlinks
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /opt/render/project/src/storage
+      # Set these in the Render dashboard after Cloudflare resources are created.
+      - key: EDGE_SYNC_SECRET
+        sync: false
+      - key: CF_ACCOUNT_ID
+        sync: false
+      - key: CF_KV_NAMESPACE_ID
+        sync: false
+      - key: CF_API_TOKEN
+        sync: false
+    disk:
+      name: justlinks-data
+      mountPath: /opt/render/project/src/storage
+      sizeGB: 1

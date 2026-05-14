@@ -1,0 +1,28 @@
+name = "justlinks-edge"
+main = "index.ts"
+compatibility_date = "2026-05-14"
+
+routes = [
+  { pattern = "justlinks.cc/*", zone_name = "justlinks.cc" },
+  { pattern = "www.justlinks.cc/*", zone_name = "justlinks.cc" }
+]
+
+[vars]
+# Replace this after the Render service is created.
+DASHBOARD_ORIGIN = "https://justlinks.onrender.com"
+# Set the real value with:
+# npx wrangler secret put EDGE_SYNC_SECRET --config worker/wrangler.toml
+
+[[kv_namespaces]]
+binding = "JUSTLINKS_LINKS"
+id = "replace_with_cloudflare_kv_namespace_id"
+preview_id = "replace_with_cloudflare_preview_kv_namespace_id"
+
+[[queues.producers]]
+binding = "JUSTLINKS_CLICK_QUEUE"
+queue = "justlinks-click-events"
+
+[[queues.consumers]]
+queue = "justlinks-click-events"
+max_batch_size = 100
+max_batch_timeout = 5
