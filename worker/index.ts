@@ -1,15 +1,18 @@
 import {
   classifyReferrer,
+  deepLinkEscapeUrl,
   detectBrowser,
   detectDevice,
   type EdgeClickEvent,
   type EdgeLinkConfig,
-  externalBrowserRedirect,
+  isEscapedBrowserRequest,
   isHttpUrl,
-  isInAppBrowser,
+  isMobileDevice,
   isDashboardPath,
+  renderDeepLinkEscapePage,
   selectWebFallback,
   selectDestination,
+  shouldUseBrowserEscape,
   slugFromPath
 } from "../shared/edge";
 
@@ -63,7 +66,9 @@ export default {
     if (!link || link.status !== "active") return notFound();
 
     const device = detectDevice(request.headers.get("user-agent") || "", url.searchParams.get("target") || "");
-    const destination = selectDestination(link, device);
+    const webDestination = selectWebFallback(link);
+    const browserEscape = shouldUseBrowserEscape(link);
+    const destination = browserEscape ? webDestination : selectDestination(link, device);
     const click = await buildClickEvent(request, link, destination, device);
 
     if (env.TAPSOCIALS_CLICK_QUEUE) {
@@ -72,11 +77,9 @@ export default {
       context.waitUntil(sendClickBatchToDashboard([click], env));
     }
 
-    const webDestination = selectWebFallback(link);
-    const externalDestination = link.forceExternalBrowser && isHttpUrl(webDestination) ? externalBrowserRedirect(webDestination, device) : null;
-    if (externalDestination) return Response.redirect(externalDestination, 302);
-    if (link.forceExternalBrowser && device === "iOS" && isInAppBrowser(request.headers.get("user-agent") || "") && isHttpUrl(webDestination)) {
-      return openInBrowserPage(webDestination);
+    if (browserEscape && isHttpUrl(webDestination) && isMobileDevice(device)) {
+      if (isEscapedBrowserRequest(url.searchParams)) return Response.redirect(webDestination, 302);
+      return htmlResponse(renderDeepLinkEscapePage(deepLinkEscapeUrl(request.url), request.headers.get("user-agent") || ""));
     }
 
     return Response.redirect(destination, 302);
@@ -224,6 +227,10 @@ function notFound(): Response {
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Link unavailable</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:#09090b;color:#f2f2f3}main{width:min(420px,calc(100vw - 32px));border:1px solid #27272f;border-radius:12px;background:#0f0f12;padding:28px}p{color:#8d8d98}</style></head><body><main><h1>Link unavailable</h1><p>This link is paused, deleted, or does not exist.</p></main></body></html>`,
     { status: 404, headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
+}
+
+function htmlResponse(html: string, status = 200): Response {
+  return new Response(html, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
 function openInBrowserPage(destination: string): Response {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SmartLink } from "../shared/types.js";
-import { androidExternalBrowserIntent, isInAppBrowser } from "../shared/edge.js";
+import { androidExternalBrowserIntent, deepLinkEscapeUrl, externalBrowserEscapeAttemptUrl, isEscapedBrowserRequest, isInAppBrowser, shouldUseBrowserEscape } from "../shared/edge.js";
 import { cleanSlug, detectDevice, selectDestination } from "../server/routing.js";
 
 const link: SmartLink = {
@@ -46,4 +46,18 @@ test("androidExternalBrowserIntent wraps http destinations for social in-app bro
   );
   assert.equal(androidExternalBrowserIntent("myapp://path"), null);
   assert.equal(isInAppBrowser("Mozilla/5.0 Reddit/2026 iPhone"), true);
+});
+
+test("deep link browser escape targets the same short link before final redirect", () => {
+  const escaped = deepLinkEscapeUrl("https://tapsocials.com/d-test?utm=one");
+  assert.equal(escaped, "https://tapsocials.com/d-test?utm=one&escaped=1");
+  assert.equal(isEscapedBrowserRequest(new URL(escaped).searchParams), true);
+  assert.equal(shouldUseBrowserEscape({ slug: "plain", isDeepLink: true }), true);
+  assert.equal(shouldUseBrowserEscape({ slug: "d-prefixed" }), true);
+  assert.equal(shouldUseBrowserEscape({ slug: "plain" }), false);
+  assert.equal(
+    externalBrowserEscapeAttemptUrl(escaped, "Android"),
+    "intent://tapsocials.com/d-test?utm=one&escaped=1#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=https%3A%2F%2Ftapsocials.com%2Fd-test%3Futm%3Done%26escaped%3D1;end"
+  );
+  assert.equal(externalBrowserEscapeAttemptUrl(escaped, "iOS"), "x-safari-https://tapsocials.com/d-test?utm=one&escaped=1");
 });

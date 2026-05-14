@@ -8,6 +8,7 @@ export interface EdgeLinkConfig {
   androidUrl: string;
   webUrl: string;
   fallbackUrl: string;
+  isDeepLink?: boolean;
   forceExternalBrowser?: boolean;
 }
 
@@ -36,6 +37,7 @@ export function toEdgeLink(link: SmartLink): EdgeLinkConfig {
     androidUrl: link.androidUrl,
     webUrl: link.webUrl,
     fallbackUrl: link.fallbackUrl,
+    isDeepLink: Boolean(link.isDeepLink),
     forceExternalBrowser: Boolean(link.forceExternalBrowser)
   };
 }
@@ -101,6 +103,24 @@ export function isInAppBrowser(userAgent = ""): boolean {
   return /FBAN|FBAV|FB_IAB|Instagram|Line\/|TikTok|Twitter|Pinterest|Snapchat|LinkedInApp|Reddit|wv\)|; wv/.test(userAgent);
 }
 
+export function isMobileDevice(device: DeviceType): boolean {
+  return device === "iOS" || device === "Android";
+}
+
+export function shouldUseBrowserEscape(link: Pick<EdgeLinkConfig, "slug" | "isDeepLink" | "forceExternalBrowser">): boolean {
+  return Boolean(link.forceExternalBrowser || link.isDeepLink || link.slug.startsWith("d-"));
+}
+
+export function isEscapedBrowserRequest(searchParams: URLSearchParams): boolean {
+  return searchParams.get("escaped") === "1";
+}
+
+export function deepLinkEscapeUrl(requestUrl: string): string {
+  const url = new URL(requestUrl);
+  url.searchParams.set("escaped", "1");
+  return url.toString();
+}
+
 export function androidExternalBrowserIntent(destination: string): string | null {
   if (!isHttpUrl(destination)) return null;
   const url = new URL(destination);
@@ -111,6 +131,37 @@ export function androidExternalBrowserIntent(destination: string): string | null
 export function externalBrowserRedirect(destination: string, device: DeviceType): string | null {
   if (device === "Android") return androidExternalBrowserIntent(destination);
   return null;
+}
+
+export function externalBrowserEscapeAttemptUrl(targetUrl: string, device: DeviceType): string | null {
+  if (!isHttpUrl(targetUrl)) return null;
+  const url = new URL(targetUrl);
+
+  if (device === "Android") {
+    const scheme = url.protocol.replace(":", "");
+    return `intent://${url.host}${url.pathname}${url.search}${url.hash}#Intent;scheme=${scheme};package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(targetUrl)};end`;
+  }
+
+  if (device === "iOS") {
+    return `x-safari-https://${targetUrl.replace(/^https?:\/\//, "")}`;
+  }
+
+  return null;
+}
+
+export function renderDeepLinkEscapePage(targetUrl: string, userAgent = ""): string {
+  const safeTarget = escapeHtml(targetUrl);
+  const jsTarget = JSON.stringify(targetUrl);
+  const isIos = /iphone|ipad|ipod/i.test(userAgent);
+  const isAndroid = /android/i.test(userAgent);
+  const browserName = isAndroid ? "Chrome" : "Safari";
+  const instagramIos = isIos && /instagram/i.test(userAgent);
+
+  if (instagramIos) {
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open in Safari</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#fff;font-family:-apple-system,BlinkMacSystemFont,Inter,ui-sans-serif,system-ui,sans-serif}main{width:min(360px,calc(100vw - 40px));border:1px solid rgb(255 255 255 / .12);border-radius:18px;background:#1a1a2e;padding:24px;text-align:center;box-shadow:0 24px 80px rgb(0 0 0 / .5)}h1{margin:0 0 8px;font-size:20px}p{margin:0;color:rgb(255 255 255 / .62);font-size:14px;line-height:1.45}.primary,.secondary{display:flex;width:100%;min-height:46px;align-items:center;justify-content:center;border:0;border-radius:12px;font-weight:700;text-decoration:none}.primary{margin-top:20px;background:#3b82f6;color:#fff}.secondary{margin-top:12px;background:rgb(255 255 255 / .06);color:rgb(255 255 255 / .82);border:1px solid rgb(255 255 255 / .12)}small{display:block;margin-top:10px;color:rgb(255 255 255 / .42)}</style></head><body><main><h1>Open in Safari</h1><p>Instagram's browser can't open this link directly.</p><button class="primary" type="button" onclick="tapShareBrowser()">Share &amp; Open in Safari</button><button class="secondary" type="button" onclick="tapCopyLink()">Copy Link</button><small>Tap "Open in Safari" from the share menu</small></main><script>var tapTarget=${jsTarget};function tapShareBrowser(){if(navigator.share){navigator.share({url:tapTarget}).catch(function(){window.location.href=tapTarget;});return;}window.location.href=tapTarget;}function tapCopyLink(){function done(){var b=document.querySelector('.secondary');if(b)b.textContent='Copied!';}if(navigator.clipboard){navigator.clipboard.writeText(tapTarget).then(done).catch(copyFallback);return;}copyFallback();function copyFallback(){var t=document.createElement('textarea');t.value=tapTarget;t.style.cssText='position:fixed;opacity:0';document.body.appendChild(t);t.select();try{document.execCommand('copy');done();}catch(e){}document.body.removeChild(t);}}</script></body></html>`;
+  }
+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Opening link</title><style>body{margin:0;min-height:100vh;background:#fff;font-family:-apple-system,BlinkMacSystemFont,Inter,ui-sans-serif,system-ui,sans-serif}.overlay{position:fixed;inset:0;z-index:99999;background:#fff}.fallback{position:absolute;left:0;right:0;bottom:60px;text-align:center}.fallback button{display:inline-flex;min-height:46px;align-items:center;justify-content:center;border:0;border-radius:12px;background:#000;color:#fff;padding:0 28px;font-size:16px;font-weight:700}</style></head><body><div id="trampoline-overlay" class="overlay"></div><script>var tapTarget=${jsTarget};var tapBrowser=${JSON.stringify(browserName)};function addCacheBuster(url){return url+(url.indexOf('?')!==-1?'&':'?')+'_t='+Date.now()+Math.random().toString(36).slice(2,6);}function tryOpenBrowser(){var uniqueUrl=addCacheBuster(tapTarget);${isAndroid ? "try{var u=new URL(uniqueUrl);window.location.href='intent://'+u.host+u.pathname+u.search+u.hash+'#Intent;scheme='+u.protocol.replace(':','')+';package=com.android.chrome;S.browser_fallback_url='+encodeURIComponent(uniqueUrl)+';end';}catch(e){window.location.href=uniqueUrl;}" : "var stripped=uniqueUrl.replace(/^https?:\\/\\//,'');window.location.href='x-safari-https://'+stripped;setTimeout(function(){window.location.href='com-apple-mobilesafari-tab:'+uniqueUrl;},200);"}}function showFallback(){var overlay=document.getElementById('trampoline-overlay');if(!overlay)return;var wrap=document.createElement('div');wrap.className='fallback';var button=document.createElement('button');button.type='button';button.textContent='Open in '+tapBrowser;button.onclick=function(event){event.preventDefault();tryOpenBrowser();setTimeout(function(){window.open(addCacheBuster(tapTarget),'_blank');},2000);};wrap.appendChild(button);overlay.appendChild(wrap);}tryOpenBrowser();setTimeout(showFallback,1500);</script><noscript><p><a href="${safeTarget}">Open in ${escapeHtml(browserName)}</a></p></noscript></body></html>`;
 }
 
 export function classifyReferrer(value?: string | null): string {
@@ -126,4 +177,14 @@ export function classifyReferrer(value?: string | null): string {
   } catch {
     return "Direct";
   }
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    if (character === "&") return "&amp;";
+    if (character === "<") return "&lt;";
+    if (character === ">") return "&gt;";
+    if (character === "\"") return "&quot;";
+    return "&#39;";
+  });
 }

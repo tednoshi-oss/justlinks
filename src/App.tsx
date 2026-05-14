@@ -962,14 +962,30 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
             <div>
               <span className="setting-title">
                 <strong>Deep Link (Safari/Chrome Escape)</strong>
-                <Info size={15} aria-hidden="true" />
+                <span className="setting-tooltip-wrap">
+                  <Info size={15} aria-hidden="true" tabIndex={0} />
+                  <span className="setting-tooltip" role="tooltip">
+                    {isEdit ? (
+                      <span>This setting is locked after creation. To change it, create a new link with the desired setting.</span>
+                    ) : (
+                      <>
+                        <span>
+                          <strong>Great for Reddit</strong> and direct traffic - auto-opens in Safari/Chrome.
+                        </span>
+                        <span>For Meta & TikTok, leave this OFF for those links.</span>
+                        <span>Can't be changed after creation.</span>
+                      </>
+                    )}
+                  </span>
+                </span>
               </span>
-              <small>{deepLink ? "Try to open Safari or Chrome instead of the in-app browser." : "Links will open normally inside in-app browsers."}</small>
+              <small>{deepLink ? "Links will auto-open in Safari/Chrome from social apps." : "Links will open normally inside in-app browsers."}</small>
             </div>
-            <button className={`switch ${deepLink ? "on" : ""}`} type="button" onClick={() => setDeepLink((value) => !value)} aria-pressed={deepLink}>
+            <button className={`switch ${deepLink ? "on" : ""}`} type="button" onClick={() => !isEdit && setDeepLink((value) => !value)} aria-pressed={deepLink} disabled={isEdit}>
               <span />
             </button>
           </div>
+          {isEdit ? <small className="warning-text">Locked - create a new link to change this setting.</small> : null}
         </div>
 
         <div className="modal-actions">
@@ -1184,8 +1200,9 @@ function EventTable({ events }: { events: ClickEvent[] }) {
 }
 
 function TypeBadge({ deep }: { deep: boolean }) {
+  const description = deep ? "Auto-jumps to Safari/Chrome from social apps. This setting is locked - create a new link to change it." : "Opens normally in in-app browsers. This setting is locked - create a new link to change it.";
   return (
-    <span className="type-badge">
+    <span className="type-badge" title={description} aria-label={`${deep ? "Deep Link" : "Normal"}: ${description}`}>
       <span className={deep ? "active" : ""} />
       {deep ? "Deep Link" : "Normal"}
     </span>

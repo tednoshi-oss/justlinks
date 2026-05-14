@@ -25,7 +25,7 @@ import {
 } from "./storage.js";
 import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
 import { classifyReferrer, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
-import { externalBrowserRedirect, isHttpUrl, isInAppBrowser, selectWebFallback, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
+import { deepLinkEscapeUrl, isEscapedBrowserRequest, isHttpUrl, isMobileDevice, renderDeepLinkEscapePage, selectWebFallback, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
 import type { AuthUser, ClickEvent } from "../shared/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -247,7 +247,9 @@ async function redirectSlug(request: express.Request, response: express.Response
 
     const device = detectDevice(request.get("user-agent"), String(request.query.target || ""));
     const browser = detectBrowser(request.get("user-agent") || "");
-    const destination = selectDestination(link, device);
+    const webDestination = selectWebFallback(link);
+    const browserEscape = shouldUseBrowserEscape(link);
+    const destination = browserEscape ? webDestination : selectDestination(link, device);
     const clickEvent: ClickEvent = {
       id: crypto.randomUUID(),
       linkId: link.id,
@@ -265,14 +267,12 @@ async function redirectSlug(request: express.Request, response: express.Response
       console.error("Failed to record click", error);
     });
 
-    const webDestination = selectWebFallback(link);
-    const externalDestination = link.forceExternalBrowser && isHttpUrl(webDestination) ? externalBrowserRedirect(webDestination, device) : null;
-    if (externalDestination) {
-      response.redirect(302, externalDestination);
-      return;
-    }
-    if (link.forceExternalBrowser && device === "iOS" && isInAppBrowser(request.get("user-agent") || "") && isHttpUrl(webDestination)) {
-      response.status(200).send(renderOpenInBrowser(webDestination));
+    if (browserEscape && isHttpUrl(webDestination) && isMobileDevice(device)) {
+      if (isEscapedBrowserRequest(new URLSearchParams(request.query as Record<string, string>))) {
+        response.redirect(302, webDestination);
+        return;
+      }
+      response.status(200).send(renderDeepLinkEscapePage(deepLinkEscapeUrl(absoluteRequestUrl(request)), request.get("user-agent") || ""));
       return;
     }
 
@@ -280,6 +280,12 @@ async function redirectSlug(request: express.Request, response: express.Response
   } catch (error) {
     next(error);
   }
+}
+
+function absoluteRequestUrl(request: Request): string {
+  const protocol = String(request.get("x-forwarded-proto") || request.protocol || "https").split(",")[0].trim();
+  const host = String(request.get("x-forwarded-host") || request.get("host") || "localhost");
+  return `${protocol}://${host}${request.originalUrl}`;
 }
 
 app.use(express.static(clientDist, { maxAge: "1h", etag: true }));
