@@ -372,7 +372,7 @@ function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <div className={`brand ${compact ? "compact" : ""}`}>
       <div className="brand-mark">
-        <Link2 size={compact ? 18 : 22} />
+        <img src="/tapsocials-logo.svg?v=2" alt="" aria-hidden="true" />
       </div>
       <span>TapSocials</span>
     </div>
@@ -798,9 +798,9 @@ function LinkRow({
   return (
     <article className="link-row">
       <div className="link-main">
-        <button className="row-link-copy" type="button" title={`Copy ${href}`} aria-label={`Copy ${shortCode(link.slug)}`} onClick={() => void copyLink()}>
+        <span className="row-link-copy" aria-hidden="true">
           <Link2 size={16} />
-        </button>
+        </span>
         <div className="link-main-text">
           <strong>{link.name}</strong>
           <small>{link.fallbackUrl}</small>
@@ -819,6 +819,9 @@ function LinkRow({
       </div>
       <TypeBadge deep={isDeepLink(link)} />
       <div className="row-actions">
+        <button className={`icon-button ghost ${copyState === "copied" ? "success" : ""}`} type="button" title={`Copy ${href}`} aria-label={`Copy link for ${link.name}`} onClick={() => void copyLink()}>
+          <Copy size={16} />
+        </button>
         <button className="icon-button ghost" type="button" title="View stats" aria-label={`View stats for ${link.name}`} onClick={onStats}>
           <BarChart3 size={16} />
         </button>
@@ -1352,6 +1355,10 @@ function timeAgo(value: string): string {
 }
 
 async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (copyTextWithSelection(text)) {
+    return true;
+  }
+
   if (navigator.clipboard?.writeText && window.isSecureContext) {
     try {
       await navigator.clipboard.writeText(text);
@@ -1361,15 +1368,26 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
     }
   }
 
+  return false;
+}
+
+function copyTextWithSelection(text: string): boolean {
   const textarea = document.createElement("textarea");
   textarea.value = text;
   textarea.setAttribute("readonly", "");
   textarea.style.position = "fixed";
-  textarea.style.top = "0";
-  textarea.style.left = "-9999px";
-  textarea.style.opacity = "0";
+  textarea.style.top = "50%";
+  textarea.style.left = "50%";
+  textarea.style.width = "1px";
+  textarea.style.height = "1px";
+  textarea.style.opacity = "0.01";
+  textarea.style.pointerEvents = "none";
   document.body.appendChild(textarea);
-  textarea.focus();
+
+  const selection = document.getSelection();
+  const previousRange = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+
+  textarea.focus({ preventScroll: true });
   textarea.select();
   textarea.setSelectionRange(0, text.length);
 
@@ -1379,5 +1397,9 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
     return false;
   } finally {
     document.body.removeChild(textarea);
+    if (selection) {
+      selection.removeAllRanges();
+      if (previousRange) selection.addRange(previousRange);
+    }
   }
 }

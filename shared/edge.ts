@@ -25,7 +25,7 @@ export interface EdgeClickEvent {
 }
 
 export const dashboardPathPrefixes = ["/dashboard", "/api", "/assets"] as const;
-export const dashboardExactPaths = ["/", "/favicon.png", "/robots.txt", "/manifest.webmanifest"] as const;
+export const dashboardExactPaths = ["/", "/favicon.png", "/favicon.svg", "/tapsocials-logo.svg", "/robots.txt", "/manifest.webmanifest"] as const;
 
 export function toEdgeLink(link: SmartLink): EdgeLinkConfig {
   return {

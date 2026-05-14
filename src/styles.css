@@ -117,7 +117,9 @@ code,
 }
 
 .brand.compact .brand-mark {
-  display: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
 }
 
 .brand-mark {
@@ -126,9 +128,15 @@ code,
   height: 38px;
   place-items: center;
   border-radius: 12px;
-  background: var(--primary);
-  color: var(--primary-foreground);
+  background: transparent;
   box-shadow: 0 8px 24px rgb(34 211 238 / 0.22);
+  overflow: hidden;
+}
+
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .nav-list {
@@ -539,6 +547,10 @@ code,
   color: var(--foreground);
 }
 
+.icon-button.ghost.success {
+  color: var(--primary);
+}
+
 .icon-button.danger {
   color: var(--destructive);
 }
@@ -758,7 +770,7 @@ textarea:focus {
 .links-table-head,
 .link-row {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) 80px 120px 130px;
+  grid-template-columns: minmax(260px, 1fr) 80px 120px 178px;
   align-items: center;
   gap: 16px;
 }
@@ -812,10 +824,6 @@ textarea:focus {
   background: transparent;
   color: var(--muted-foreground);
   padding: 0;
-}
-
-.row-link-copy:hover {
-  color: var(--primary);
 }
 
 .link-main svg {
@@ -1520,7 +1528,7 @@ textarea:focus {
 
   .links-table-head,
   .link-row {
-    grid-template-columns: minmax(260px, 1fr) 78px 112px 124px;
+    grid-template-columns: minmax(260px, 1fr) 78px 112px 168px;
   }
 }
 
