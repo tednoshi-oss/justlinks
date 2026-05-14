@@ -10,8 +10,8 @@ import {
 } from "../shared/edge";
 
 interface Env {
-  JUSTLINKS_LINKS: KVNamespace;
-  JUSTLINKS_CLICK_QUEUE?: Queue<EdgeClickEvent>;
+  TAPSOCIALS_LINKS: KVNamespace;
+  TAPSOCIALS_CLICK_QUEUE?: Queue<EdgeClickEvent>;
   DASHBOARD_ORIGIN: string;
   EDGE_SYNC_SECRET?: string;
 }
@@ -62,8 +62,8 @@ export default {
     const destination = selectDestination(link, device);
     const click = await buildClickEvent(request, link, destination, device);
 
-    if (env.JUSTLINKS_CLICK_QUEUE) {
-      context.waitUntil(env.JUSTLINKS_CLICK_QUEUE.send(click));
+    if (env.TAPSOCIALS_CLICK_QUEUE) {
+      context.waitUntil(env.TAPSOCIALS_CLICK_QUEUE.send(click));
     } else {
       context.waitUntil(sendClickBatchToDashboard([click], env));
     }
@@ -83,14 +83,14 @@ async function handleEdgeSyncRequest(request: Request, env: Env, url: URL): Prom
     const pathSlug = decodeURIComponent(url.pathname.replace("/__edge/links/", ""));
     const link = await readJson<EdgeLinkConfig>(request);
     if (!link?.slug || link.slug !== pathSlug) return jsonResponse({ error: "Invalid link payload." }, 400);
-    await env.JUSTLINKS_LINKS.put(`link:${link.slug}`, JSON.stringify(link));
+    await env.TAPSOCIALS_LINKS.put(`link:${link.slug}`, JSON.stringify(link));
     return jsonResponse({ ok: true, synced: 1 });
   }
 
   if (request.method === "DELETE" && url.pathname.startsWith("/__edge/links/")) {
     const slug = decodeURIComponent(url.pathname.replace("/__edge/links/", ""));
     if (!slug) return jsonResponse({ error: "Missing slug." }, 400);
-    await env.JUSTLINKS_LINKS.delete(`link:${slug}`);
+    await env.TAPSOCIALS_LINKS.delete(`link:${slug}`);
     return jsonResponse({ ok: true, deleted: 1 });
   }
 
@@ -101,7 +101,7 @@ async function handleEdgeSyncRequest(request: Request, env: Env, url: URL): Prom
     await Promise.all(
       links
         .filter((link) => link?.slug)
-        .map((link) => env.JUSTLINKS_LINKS.put(`link:${link.slug}`, JSON.stringify(link)))
+        .map((link) => env.TAPSOCIALS_LINKS.put(`link:${link.slug}`, JSON.stringify(link)))
     );
     const deleted = await pruneMissingLinks(expectedKeys, env);
     return jsonResponse({ ok: true, synced: links.length, deleted });
@@ -115,9 +115,9 @@ async function pruneMissingLinks(expectedKeys: Set<string>, env: Env): Promise<n
   let cursor: string | undefined;
 
   do {
-    const page = await env.JUSTLINKS_LINKS.list({ prefix: "link:", cursor });
+    const page = await env.TAPSOCIALS_LINKS.list({ prefix: "link:", cursor });
     const staleKeys = page.keys.filter((key) => !expectedKeys.has(key.name));
-    await Promise.all(staleKeys.map((key) => env.JUSTLINKS_LINKS.delete(key.name)));
+    await Promise.all(staleKeys.map((key) => env.TAPSOCIALS_LINKS.delete(key.name)));
     deleted += staleKeys.length;
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
@@ -126,7 +126,7 @@ async function pruneMissingLinks(expectedKeys: Set<string>, env: Env): Promise<n
 }
 
 async function getEdgeLink(slug: string, env: Env): Promise<EdgeLinkConfig | null> {
-  const cached = await env.JUSTLINKS_LINKS.get<EdgeLinkConfig>(`link:${slug}`, { type: "json" });
+  const cached = await env.TAPSOCIALS_LINKS.get<EdgeLinkConfig>(`link:${slug}`, { type: "json" });
   if (cached) return cached;
 
   const fallback = await fetchDashboardJson<EdgeLinkConfig>(`/api/edge/links/${encodeURIComponent(slug)}`, env);

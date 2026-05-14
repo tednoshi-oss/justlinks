@@ -1,27 +1,27 @@
-name = "justlinks-edge"
+name = "tapsocials-edge"
 main = "index.ts"
 compatibility_date = "2026-05-14"
 
 routes = [
-  { pattern = "justlinks.cc/*", zone_name = "justlinks.cc" },
-  { pattern = "www.justlinks.cc/*", zone_name = "justlinks.cc" }
+  { pattern = "tapsocials.com/*", zone_name = "tapsocials.com" },
+  { pattern = "www.tapsocials.com/*", zone_name = "tapsocials.com" }
 ]
 
 [vars]
-DASHBOARD_ORIGIN = "https://app.justlinks.cc"
+DASHBOARD_ORIGIN = "https://app.tapsocials.com"
 # Set the real value with:
 # npx wrangler secret put EDGE_SYNC_SECRET --config worker/wrangler.toml
 
 [[kv_namespaces]]
-binding = "JUSTLINKS_LINKS"
+binding = "TAPSOCIALS_LINKS"
 id = "b5f217a822384cc189bd4bae9c504a13"
 preview_id = "4870b0d98f804a67b6142d7545c501ff"
 
 [[queues.producers]]
-binding = "JUSTLINKS_CLICK_QUEUE"
-queue = "justlinks-click-events"
+binding = "TAPSOCIALS_CLICK_QUEUE"
+queue = "tapsocials-click-events"
 
 [[queues.consumers]]
-queue = "justlinks-click-events"
+queue = "tapsocials-click-events"
 max_batch_size = 100
 max_batch_timeout = 5

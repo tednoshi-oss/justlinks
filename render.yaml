@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: justlinks
+    name: tapsocials
     runtime: node
     plan: starter
     buildCommand: npm ci --include=dev && npm run build
@@ -15,8 +15,8 @@ services:
       - key: EDGE_SYNC_SECRET
         sync: false
       - key: EDGE_WORKER_SYNC_URL
-        value: https://justlinks.cc/__edge
+        value: https://tapsocials.com/__edge
     disk:
-      name: justlinks-data
+      name: tapsocials-data
       mountPath: /opt/render/project/src/storage
       sizeGB: 1

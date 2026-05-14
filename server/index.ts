@@ -20,7 +20,7 @@ app.use(compression());
 app.use(express.json({ limit: "256kb" }));
 
 app.get("/api/health", (_request, response) => {
-  response.json({ ok: true, service: "justlinks", edgeSync: isEdgeSyncConfigured() });
+  response.json({ ok: true, service: "tapsocials", edgeSync: isEdgeSyncConfigured() });
 });
 
 app.get("/api/links", async (_request, response, next) => {
@@ -90,7 +90,6 @@ app.delete("/api/links/:id", async (request, response, next) => {
     const previous = await findLinkById(request.params.id);
     const deleted = await deleteLink(request.params.id);
     if (deleted && previous) {
-      console.info(`Reconciling deleted edge link ${previous.slug}`);
       await deleteLinkFromEdge(previous.slug).catch((error) => console.error("Failed to delete edge link", error));
       await syncLinksToEdge(await listRawLinks()).catch((error) => console.error("Failed to reconcile edge links", error));
     }
@@ -217,7 +216,7 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
 });
 
 app.listen(port, "0.0.0.0", () => {
-  console.log(`JustLinks running at http://localhost:${port}`);
+  console.log(`TapSocials running at http://localhost:${port}`);
 });
 
 function clientIp(request: Request): string {

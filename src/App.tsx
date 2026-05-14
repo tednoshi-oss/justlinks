@@ -252,7 +252,7 @@ function Brand({ compact = false }: { compact?: boolean }) {
       <div className="brand-mark">
         <Link2 size={compact ? 18 : 22} />
       </div>
-      <span>JustLinks</span>
+      <span>TapSocials</span>
     </div>
   );
 }

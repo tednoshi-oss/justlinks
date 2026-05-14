@@ -43,7 +43,6 @@ export async function deleteLinkFromEdge(slug: string): Promise<void> {
       body: JSON.stringify(tombstone)
     });
     await assertSyncOk(response, `delete ${slug}`);
-    console.info(`Edge tombstone ${slug}: ${response.status}`);
     return;
   }
 
@@ -53,7 +52,6 @@ export async function deleteLinkFromEdge(slug: string): Promise<void> {
     body: JSON.stringify(tombstone)
   });
   await assertCloudflareOk(response, `delete ${slug}`);
-  console.info(`Edge tombstone ${slug}: ${response.status}`);
 }
 
 export async function syncLinksToEdge(links: SmartLink[]): Promise<{ synced: number; configured: boolean }> {
