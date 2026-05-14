@@ -17,6 +17,7 @@ import {
   Plus,
   RefreshCcw,
   Search,
+  Shuffle,
   Sparkles,
   Trash2,
   User,
@@ -871,19 +872,16 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
   const isEdit = Boolean(editLink);
   const [title, setTitle] = useState(editLink?.name || "");
   const [destinationUrl, setDestinationUrl] = useState(editLink?.fallbackUrl || "");
-  const [iosUrl, setIosUrl] = useState(editLink?.iosUrl || "");
-  const [androidUrl, setAndroidUrl] = useState(editLink?.androidUrl || "");
   const [notes, setNotes] = useState(editLink?.description || "");
   const [shortCode, setShortCode] = useState(editLink?.slug || "");
   const [customCode, setCustomCode] = useState(Boolean(editLink));
-  const [deepLink, setDeepLink] = useState(editLink ? isDeepLink(editLink) : true);
-  const [externalBrowser, setExternalBrowser] = useState(editLink ? Boolean(editLink.forceExternalBrowser) : true);
+  const [deepLink, setDeepLink] = useState(editLink ? isDeepLink(editLink) : false);
   const [saving, setSaving] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setSaving(true);
-    const cleanedSlug = customCode && shortCode ? normalizeShortCode(shortCode, deepLink) : undefined;
+    const cleanedSlug = customCode && shortCode ? normalizeShortCode(shortCode, deepLink) : !isEdit ? randomCode(deepLink) : undefined;
     try {
       await onSubmit({
         name: title,
@@ -891,12 +889,12 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
         description: notes,
         fallbackUrl: destinationUrl,
         webUrl: destinationUrl,
-        iosUrl: deepLink ? iosUrl : "",
-        androidUrl: deepLink ? androidUrl : "",
+        iosUrl: "",
+        androidUrl: "",
         deepLinkPath: "",
         tags: inferTags(notes, title),
         isDeepLink: deepLink,
-        forceExternalBrowser: deepLink && externalBrowser
+        forceExternalBrowser: deepLink
       } as Partial<SmartLink>);
     } catch (error) {
       console.error(error);
@@ -924,28 +922,17 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
           <input required type="url" value={destinationUrl} onChange={(event) => setDestinationUrl(event.target.value)} placeholder="https://example.com" />
         </label>
 
-        {deepLink ? (
-          <div className="mobile-target-grid">
-            <label className="field">
-              <span>iOS URL</span>
-              <input value={iosUrl} onChange={(event) => setIosUrl(event.target.value)} placeholder="myapp://profile/name" />
-            </label>
-            <label className="field">
-              <span>Android URL</span>
-              <input value={androidUrl} onChange={(event) => setAndroidUrl(event.target.value)} placeholder="intent://profile/name#Intent;scheme=myapp;end" />
-            </label>
-          </div>
-        ) : null}
-
         <div className="field">
           <div className="field-row">
             <span>Short Code</span>
             {!isEdit ? (
               <div className="tiny-toggle">
                 <button type="button" className={!customCode ? "active" : ""} onClick={() => setCustomCode(false)}>
+                  <Shuffle size={14} />
                   Random
                 </button>
                 <button type="button" className={customCode ? "active" : ""} onClick={() => setCustomCode(true)}>
+                  <Edit3 size={14} />
                   Custom
                 </button>
               </div>
@@ -973,25 +960,16 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
           <p>Link Settings</p>
           <div className="setting-row">
             <div>
-              <strong>Mobile Deep Link</strong>
-              <small>{deepLink ? "Use mobile targets when available." : "Use the destination URL for every device."}</small>
+              <span className="setting-title">
+                <strong>Deep Link (Safari/Chrome Escape)</strong>
+                <Info size={15} aria-hidden="true" />
+              </span>
+              <small>{deepLink ? "Try to open Safari or Chrome instead of the in-app browser." : "Links will open normally inside in-app browsers."}</small>
             </div>
-            <button className={`switch ${deepLink ? "on" : ""}`} type="button" onClick={() => !isEdit && setDeepLink((value) => !value)} aria-pressed={deepLink} disabled={isEdit}>
+            <button className={`switch ${deepLink ? "on" : ""}`} type="button" onClick={() => setDeepLink((value) => !value)} aria-pressed={deepLink}>
               <span />
             </button>
           </div>
-          {isEdit ? <small className="warning-text">Locked - create a new link to change this setting.</small> : null}
-          {deepLink ? (
-            <div className="setting-row">
-              <div>
-                <strong>External Browser Helper</strong>
-                <small>{externalBrowser ? "Try Android intent and iOS fallback helper." : "Redirect directly to the selected target."}</small>
-              </div>
-              <button className={`switch ${externalBrowser ? "on" : ""}`} type="button" onClick={() => setExternalBrowser((value) => !value)} aria-pressed={externalBrowser}>
-                <span />
-              </button>
-            </div>
-          ) : null}
         </div>
 
         <div className="modal-actions">

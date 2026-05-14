@@ -1371,6 +1371,9 @@ textarea:focus {
 }
 
 .tiny-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   min-height: 26px;
   border: 0;
   border-radius: 6px;
@@ -1421,6 +1424,16 @@ textarea:focus {
 .setting-row strong,
 .setting-row small {
   display: block;
+}
+
+.setting-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.setting-title svg {
+  color: var(--muted-foreground);
 }
 
 .setting-row strong {
