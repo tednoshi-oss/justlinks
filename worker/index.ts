@@ -4,7 +4,11 @@ import {
   detectDevice,
   type EdgeClickEvent,
   type EdgeLinkConfig,
+  externalBrowserRedirect,
+  isHttpUrl,
+  isInAppBrowser,
   isDashboardPath,
+  selectWebFallback,
   selectDestination,
   slugFromPath
 } from "../shared/edge";
@@ -66,6 +70,13 @@ export default {
       context.waitUntil(env.TAPSOCIALS_CLICK_QUEUE.send(click));
     } else {
       context.waitUntil(sendClickBatchToDashboard([click], env));
+    }
+
+    const webDestination = selectWebFallback(link);
+    const externalDestination = link.forceExternalBrowser && isHttpUrl(webDestination) ? externalBrowserRedirect(webDestination, device) : null;
+    if (externalDestination) return Response.redirect(externalDestination, 302);
+    if (link.forceExternalBrowser && device === "iOS" && isInAppBrowser(request.headers.get("user-agent") || "") && isHttpUrl(webDestination)) {
+      return openInBrowserPage(webDestination);
     }
 
     return Response.redirect(destination, 302);
@@ -213,6 +224,25 @@ function notFound(): Response {
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Link unavailable</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:#09090b;color:#f2f2f3}main{width:min(420px,calc(100vw - 32px));border:1px solid #27272f;border-radius:12px;background:#0f0f12;padding:28px}p{color:#8d8d98}</style></head><body><main><h1>Link unavailable</h1><p>This link is paused, deleted, or does not exist.</p></main></body></html>`,
     { status: 404, headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
+}
+
+function openInBrowserPage(destination: string): Response {
+  const safeDestination = escapeHtml(destination);
+  const jsDestination = JSON.stringify(destination);
+  return new Response(
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="1;url=${safeDestination}"><title>Opening link</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:#09090b;color:#f2f2f3}main{width:min(420px,calc(100vw - 32px));border:1px solid #27272f;border-radius:10px;background:#0f0f12;padding:28px}h1{margin:0 0 8px;font-size:22px}p{margin:0 0 18px;color:#a1a1aa;line-height:1.5}a{display:inline-flex;min-height:42px;align-items:center;justify-content:center;border-radius:8px;background:#22d3ee;color:#071014;padding:0 14px;font-weight:700;text-decoration:none}</style><script>window.setTimeout(function(){window.location.replace(${jsDestination});},250);</script></head><body><main><h1>Opening link</h1><p>If your social app keeps this page inside its browser, use the app menu and choose Open in browser.</p><a href="${safeDestination}" rel="noreferrer">Continue</a></main></body></html>`,
+    { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }
+  );
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    if (character === "&") return "&amp;";
+    if (character === "<") return "&lt;";
+    if (character === ">") return "&gt;";
+    if (character === "\"") return "&quot;";
+    return "&#039;";
+  });
 }
 
 async function hashVisitor(input: string): Promise<string> {

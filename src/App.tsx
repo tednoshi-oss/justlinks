@@ -9,6 +9,8 @@ import {
   Info,
   LayoutDashboard,
   Link2,
+  LogOut,
+  Mail,
   Menu,
   MoreHorizontal,
   MousePointerClick,
@@ -17,11 +19,12 @@ import {
   Search,
   Sparkles,
   Trash2,
+  User,
   X
 } from "lucide-react";
 import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
-import type { AnalyticsPayload, BreakdownPoint, ClickEvent, DashboardSummary, LinkGroup, LinkWithStats, SmartLink } from "../shared/types";
+import type { AnalyticsPayload, AuthUser, BreakdownPoint, ClickEvent, DashboardSummary, LinkGroup, LinkWithStats, SmartLink } from "../shared/types";
 
 type View = "dashboard" | "links" | "analytics";
 type SortMode = "newest" | "oldest" | "most-clicks" | "least-clicks" | "name-asc" | "name-desc";
@@ -46,6 +49,8 @@ const initialGroups: LinkGroup[] = [
 
 export function App() {
   const [view, setView] = useState<View>(() => currentView());
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [links, setLinks] = useState<LinkWithStats[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsPayload>(blankAnalytics);
@@ -68,8 +73,26 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    api.me()
+      .then((user) => {
+        if (!cancelled) setAuthUser(user);
+      })
+      .catch(() => {
+        if (!cancelled) setAuthUser(null);
+      })
+      .finally(() => {
+        if (!cancelled) setAuthLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authUser) return;
     void refresh(days);
-  }, [days]);
+  }, [days, authUser]);
 
   async function refresh(nextDays = days) {
     try {
@@ -86,10 +109,31 @@ export function App() {
       setAnalytics(analyticsData);
       setGroups(groupsData.length ? groupsData : initialGroups);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to load dashboard.");
+      const message = requestError instanceof Error ? requestError.message : "Unable to load dashboard.";
+      if (message.includes("Authentication required")) {
+        setAuthUser(null);
+        setSummary(null);
+        setLinks([]);
+        setAnalytics(blankAnalytics);
+      }
+      setError(message);
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleAuth(user: AuthUser) {
+    setAuthUser(user);
+    setError(null);
+    await refresh(days);
+  }
+
+  async function logout() {
+    await api.logout();
+    setAuthUser(null);
+    setSummary(null);
+    setLinks([]);
+    setAnalytics(blankAnalytics);
   }
 
   function navigate(nextView: View) {
@@ -152,9 +196,15 @@ export function App() {
     return result;
   }, [groupFilter, groups, links, query, sortMode]);
 
+  if (authLoading) return <Skeleton />;
+
+  if (!authUser) {
+    return <AuthScreen onAuthenticated={(user) => void handleAuth(user)} error={error} />;
+  }
+
   return (
     <div className="app-shell">
-      <Sidebar active={view} onNavigate={navigate} />
+      <Sidebar active={view} user={authUser} onNavigate={navigate} onLogout={() => void logout()} />
 
       <main className="workspace">
         <Header
@@ -210,7 +260,74 @@ export function App() {
   );
 }
 
-function Sidebar({ active, onNavigate }: { active: View; onNavigate: (view: View) => void }) {
+function AuthScreen({ onAuthenticated, error }: { onAuthenticated: (user: AuthUser) => void; error: string | null }) {
+  const [mode, setMode] = useState<"login" | "signup">("signup");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(error);
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setAuthError(null);
+    try {
+      const user = mode === "signup" ? await api.signup({ name, email, password }) : await api.login({ email, password });
+      onAuthenticated(user);
+    } catch (requestError) {
+      setAuthError(requestError instanceof Error ? requestError.message : "Authentication failed.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <main className="auth-shell">
+      <form className="auth-card" onSubmit={(event) => void submit(event)}>
+        <Brand />
+        <div className="auth-tabs">
+          <button type="button" className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")}>
+            Sign up
+          </button>
+          <button type="button" className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>
+            Log in
+          </button>
+        </div>
+
+        {mode === "signup" ? (
+          <label className="field">
+            <span>Name</span>
+            <div className="input-with-icon">
+              <User size={16} />
+              <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" autoComplete="name" />
+            </div>
+          </label>
+        ) : null}
+
+        <label className="field">
+          <span>Email</span>
+          <div className="input-with-icon">
+            <Mail size={16} />
+            <input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" autoComplete="email" />
+          </div>
+        </label>
+
+        <label className="field">
+          <span>Password</span>
+          <input required minLength={6} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 6 characters" autoComplete={mode === "signup" ? "new-password" : "current-password"} />
+        </label>
+
+        {authError ? <div className="notice error auth-error">{authError}</div> : null}
+
+        <button className="button primary auth-submit" type="submit" disabled={saving}>
+          {saving ? "Please wait..." : mode === "signup" ? "Create Account" : "Log In"}
+        </button>
+      </form>
+    </main>
+  );
+}
+
+function Sidebar({ active, user, onNavigate, onLogout }: { active: View; user: AuthUser; onNavigate: (view: View) => void; onLogout: () => void }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   function navigateMobile(view: View) {
@@ -224,11 +341,13 @@ function Sidebar({ active, onNavigate }: { active: View; onNavigate: (view: View
         <Brand />
         <NavList active={active} onNavigate={onNavigate} />
         <div className="sidebar-footer">
-          <span className="pulse-dot" />
           <div>
-            <strong>Redirects online</strong>
-            <small>Edge-ready routing</small>
+            <strong>{user.name}</strong>
+            <small>{user.email}</small>
           </div>
+          <button className="icon-button ghost" type="button" title="Log out" aria-label="Log out" onClick={onLogout}>
+            <LogOut size={16} />
+          </button>
         </div>
       </aside>
       <div className="mobile-bar">
@@ -236,6 +355,9 @@ function Sidebar({ active, onNavigate }: { active: View; onNavigate: (view: View
           <Menu size={20} />
         </button>
         <Brand compact />
+        <button className="icon-button ghost mobile-logout" type="button" title="Log out" aria-label="Log out" onClick={onLogout}>
+          <LogOut size={17} />
+        </button>
       </div>
       {mobileOpen ? (
         <div className="mobile-menu">
@@ -746,10 +868,13 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
   const isEdit = Boolean(editLink);
   const [title, setTitle] = useState(editLink?.name || "");
   const [destinationUrl, setDestinationUrl] = useState(editLink?.fallbackUrl || "");
+  const [iosUrl, setIosUrl] = useState(editLink?.iosUrl || "");
+  const [androidUrl, setAndroidUrl] = useState(editLink?.androidUrl || "");
   const [notes, setNotes] = useState(editLink?.description || "");
   const [shortCode, setShortCode] = useState(editLink?.slug || "");
   const [customCode, setCustomCode] = useState(Boolean(editLink));
   const [deepLink, setDeepLink] = useState(editLink ? isDeepLink(editLink) : true);
+  const [externalBrowser, setExternalBrowser] = useState(editLink ? Boolean(editLink.forceExternalBrowser) : true);
   const [saving, setSaving] = useState(false);
 
   async function submit(event: FormEvent) {
@@ -763,11 +888,12 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
         description: notes,
         fallbackUrl: destinationUrl,
         webUrl: destinationUrl,
-        iosUrl: deepLink ? destinationUrl : "",
-        androidUrl: deepLink ? destinationUrl : "",
+        iosUrl: deepLink ? iosUrl : "",
+        androidUrl: deepLink ? androidUrl : "",
         deepLinkPath: "",
         tags: inferTags(notes, title),
-        isDeepLink: deepLink
+        isDeepLink: deepLink,
+        forceExternalBrowser: deepLink && externalBrowser
       } as Partial<SmartLink>);
     } catch (error) {
       console.error(error);
@@ -794,6 +920,19 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
           <span>Destination URL</span>
           <input required type="url" value={destinationUrl} onChange={(event) => setDestinationUrl(event.target.value)} placeholder="https://example.com" />
         </label>
+
+        {deepLink ? (
+          <div className="mobile-target-grid">
+            <label className="field">
+              <span>iOS URL</span>
+              <input value={iosUrl} onChange={(event) => setIosUrl(event.target.value)} placeholder="myapp://profile/name" />
+            </label>
+            <label className="field">
+              <span>Android URL</span>
+              <input value={androidUrl} onChange={(event) => setAndroidUrl(event.target.value)} placeholder="intent://profile/name#Intent;scheme=myapp;end" />
+            </label>
+          </div>
+        ) : null}
 
         <div className="field">
           <div className="field-row">
@@ -831,14 +970,25 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
           <p>Link Settings</p>
           <div className="setting-row">
             <div>
-              <strong>Deep Link (Safari/Chrome Escape)</strong>
-              <small>{deepLink ? "Links will auto-open in Safari/Chrome from social apps." : "Links will open normally inside in-app browsers."}</small>
+              <strong>Mobile Deep Link</strong>
+              <small>{deepLink ? "Use mobile targets when available." : "Use the destination URL for every device."}</small>
             </div>
             <button className={`switch ${deepLink ? "on" : ""}`} type="button" onClick={() => !isEdit && setDeepLink((value) => !value)} aria-pressed={deepLink} disabled={isEdit}>
               <span />
             </button>
           </div>
           {isEdit ? <small className="warning-text">Locked - create a new link to change this setting.</small> : null}
+          {deepLink ? (
+            <div className="setting-row">
+              <div>
+                <strong>External Browser Helper</strong>
+                <small>{externalBrowser ? "Try Android intent and iOS fallback helper." : "Redirect directly to the selected target."}</small>
+              </div>
+              <button className={`switch ${externalBrowser ? "on" : ""}`} type="button" onClick={() => setExternalBrowser((value) => !value)} aria-pressed={externalBrowser}>
+                <span />
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <div className="modal-actions">

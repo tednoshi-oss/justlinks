@@ -3,6 +3,7 @@ export type LinkStatus = "active" | "paused";
 
 export interface SmartLink {
   id: string;
+  userId?: string;
   name: string;
   slug: string;
   description: string;
@@ -13,6 +14,7 @@ export interface SmartLink {
   deepLinkPath: string;
   notes?: string;
   isDeepLink?: boolean;
+  forceExternalBrowser?: boolean;
   groupId?: string | null;
   tags: string[];
   status: LinkStatus;
@@ -22,12 +24,14 @@ export interface SmartLink {
 
 export interface LinkGroup {
   id: string;
+  userId?: string;
   name: string;
   color: string;
 }
 
 export interface ClickEvent {
   id: string;
+  userId?: string;
   linkId: string;
   slug: string;
   occurredAt: string;
@@ -81,4 +85,11 @@ export interface AnalyticsPayload {
   dailyBreakdown: DailyBreakdownPoint[];
   linkPerformance: LinkWithStats[];
   recentEvents: ClickEvent[];
+}
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  createdAt: string;
 }

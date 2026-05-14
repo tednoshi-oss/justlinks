@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import type {
   AnalyticsPayload,
+  AuthUser,
   ClickEvent,
   DashboardSummary,
   DailyBreakdownPoint,
@@ -13,10 +14,23 @@ import type {
 } from "../shared/types.js";
 import { cleanSlug } from "./routing.js";
 
+interface StoredUser extends AuthUser {
+  passwordHash: string;
+}
+
+interface AuthSession {
+  idHash: string;
+  userId: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
 interface StoreShape {
   links: SmartLink[];
   groups: LinkGroup[];
   events: ClickEvent[];
+  users: StoredUser[];
+  sessions: AuthSession[];
 }
 
 const dataDir = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), "data"));
@@ -117,13 +131,18 @@ export async function getStore(): Promise<StoreShape> {
     cachedStore = {
       links: parsed.links || seedLinks,
       groups: parsed.groups || seedGroups,
-      events: parsed.events || []
+      events: parsed.events || [],
+      users: parsed.users || [],
+      sessions: pruneExpiredSessions(parsed.sessions || [])
     };
+    migrateOwnedData(cachedStore);
   } catch {
     cachedStore = {
       links: seedLinks,
       groups: seedGroups,
-      events: buildSeedEvents(seedLinks)
+      events: buildSeedEvents(seedLinks),
+      users: [],
+      sessions: []
     };
     await persistStore(cachedStore);
   }
@@ -131,24 +150,25 @@ export async function getStore(): Promise<StoreShape> {
   return cachedStore;
 }
 
-export async function listGroups(): Promise<LinkGroup[]> {
+export async function listGroups(userId: string): Promise<LinkGroup[]> {
   const store = await getStore();
-  return store.groups;
+  return groupsForUser(store, userId);
 }
 
-export async function listLinks(): Promise<LinkWithStats[]> {
+export async function listLinks(userId: string): Promise<LinkWithStats[]> {
   const store = await getStore();
-  return withStats(store.links, store.events);
+  const links = linksForUser(store, userId);
+  return withStats(links, eventsForLinks(store, links, userId));
 }
 
-export async function listRawLinks(): Promise<SmartLink[]> {
+export async function listRawLinks(userId?: string): Promise<SmartLink[]> {
   const store = await getStore();
-  return store.links;
+  return userId ? linksForUser(store, userId) : store.links;
 }
 
-export async function findLinkById(id: string): Promise<SmartLink | undefined> {
+export async function findLinkById(id: string, userId?: string): Promise<SmartLink | undefined> {
   const store = await getStore();
-  return store.links.find((link) => link.id === id);
+  return store.links.find((link) => link.id === id && (!userId || link.userId === userId));
 }
 
 export async function findLinkBySlug(slug: string): Promise<SmartLink | undefined> {
@@ -156,9 +176,83 @@ export async function findLinkBySlug(slug: string): Promise<SmartLink | undefine
   return getSlugIndex(store).get(slug);
 }
 
+export async function getUserBySession(sessionId: string | undefined): Promise<AuthUser | null> {
+  if (!sessionId) return null;
+  const store = await getStore();
+  const idHash = hashSessionId(sessionId);
+  const session = store.sessions.find((entry) => entry.idHash === idHash);
+  if (!session || new Date(session.expiresAt).getTime() <= Date.now()) {
+    store.sessions = store.sessions.filter((entry) => entry.idHash !== idHash);
+    schedulePersist(store);
+    return null;
+  }
+  const user = store.users.find((entry) => entry.id === session.userId);
+  return user ? publicUser(user) : null;
+}
+
+export async function createUserAccount(input: { email?: string; name?: string; password?: string }): Promise<AuthUser> {
+  const store = await getStore();
+  const email = normalizeEmail(input.email);
+  const password = String(input.password || "");
+  if (!email) throw new Error("Email is required.");
+  if (password.length < 6) throw new Error("Password must be at least 6 characters.");
+  if (store.users.some((user) => user.email === email)) throw new Error("An account with this email already exists.");
+
+  const isFirstUser = store.users.length === 0;
+  const now = new Date().toISOString();
+  const user: StoredUser = {
+    id: `usr_${cryptoRandom()}`,
+    email,
+    name: String(input.name || email.split("@")[0] || "User").trim(),
+    passwordHash: hashPassword(password),
+    createdAt: now
+  };
+
+  store.users.push(user);
+  if (isFirstUser) {
+    claimLegacyData(store, user.id);
+  } else {
+    ensureDefaultGroups(store, user.id);
+  }
+  await persistStore(store);
+  return publicUser(user);
+}
+
+export async function authenticateUser(emailInput: string | undefined, passwordInput: string | undefined): Promise<AuthUser | null> {
+  const store = await getStore();
+  const email = normalizeEmail(emailInput);
+  const user = store.users.find((entry) => entry.email === email);
+  if (!user || !verifyPassword(String(passwordInput || ""), user.passwordHash)) return null;
+  return publicUser(user);
+}
+
+export async function createSession(userId: string): Promise<string> {
+  const store = await getStore();
+  const sessionId = crypto.randomBytes(32).toString("base64url");
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  store.sessions = pruneExpiredSessions(store.sessions).filter((session) => session.userId !== userId || new Date(session.expiresAt).getTime() > Date.now());
+  store.sessions.push({
+    idHash: hashSessionId(sessionId),
+    userId,
+    createdAt: now.toISOString(),
+    expiresAt: expiresAt.toISOString()
+  });
+  await persistStore(store);
+  return sessionId;
+}
+
+export async function deleteSession(sessionId: string | undefined): Promise<void> {
+  if (!sessionId) return;
+  const store = await getStore();
+  const idHash = hashSessionId(sessionId);
+  store.sessions = store.sessions.filter((session) => session.idHash !== idHash);
+  await persistStore(store);
+}
+
 export async function addClickEvent(event: ClickEvent): Promise<void> {
   const store = await getStore();
-  store.events.unshift(event);
+  store.events.unshift(withEventOwner(store, event));
   store.events = store.events.slice(0, 100000);
   schedulePersist(store);
 }
@@ -166,16 +260,17 @@ export async function addClickEvent(event: ClickEvent): Promise<void> {
 export async function addClickEvents(events: ClickEvent[]): Promise<void> {
   if (!events.length) return;
   const store = await getStore();
-  store.events.unshift(...events);
+  store.events.unshift(...events.map((event) => withEventOwner(store, event)));
   store.events = store.events.slice(0, 100000);
   schedulePersist(store);
 }
 
-export async function createGroup(input: Partial<LinkGroup>): Promise<LinkGroup> {
+export async function createGroup(input: Partial<LinkGroup>, userId: string): Promise<LinkGroup> {
   const store = await getStore();
   const name = String(input.name || "").trim();
   const group: LinkGroup = {
-    id: uniqueGroupId(slugText(name), store.groups),
+    id: uniqueGroupId(slugText(name), groupsForUser(store, userId)),
+    userId,
     name,
     color: String(input.color || "#6366f1")
   };
@@ -184,7 +279,7 @@ export async function createGroup(input: Partial<LinkGroup>): Promise<LinkGroup>
   return group;
 }
 
-export async function createLink(input: Partial<SmartLink>): Promise<LinkWithStats> {
+export async function createLink(input: Partial<SmartLink>, userId: string): Promise<LinkWithStats> {
   const store = await getStore();
   const isDeepLink = input.isDeepLink !== false;
   const requestedSlug = input.slug ? cleanSlug(input.slug) : isDeepLink ? `d-${cryptoRandom()}` : cleanSlug(input.name || "new-link");
@@ -193,6 +288,7 @@ export async function createLink(input: Partial<SmartLink>): Promise<LinkWithSta
   const now = new Date().toISOString();
   const link: SmartLink = {
     id: `lnk_${cryptoRandom()}`,
+    userId,
     name: String(input.name || "Untitled Link").trim(),
     slug,
     description: String(input.description || "").trim(),
@@ -203,7 +299,8 @@ export async function createLink(input: Partial<SmartLink>): Promise<LinkWithSta
     deepLinkPath: String(input.deepLinkPath || "").trim(),
     notes: String(input.notes || input.description || "").trim(),
     isDeepLink,
-    groupId: input.groupId || null,
+    forceExternalBrowser: Boolean(input.forceExternalBrowser),
+    groupId: isGroupOwnedByUser(store, userId, input.groupId) ? input.groupId || null : null,
     tags: normalizeTags(input.tags),
     status: normalizeStatus(input.status),
     createdAt: now,
@@ -216,9 +313,9 @@ export async function createLink(input: Partial<SmartLink>): Promise<LinkWithSta
   return withStats([link], store.events)[0];
 }
 
-export async function updateLink(id: string, input: Partial<SmartLink>): Promise<LinkWithStats | null> {
+export async function updateLink(id: string, input: Partial<SmartLink>, userId: string): Promise<LinkWithStats | null> {
   const store = await getStore();
-  const index = store.links.findIndex((link) => link.id === id);
+  const index = store.links.findIndex((link) => link.id === id && link.userId === userId);
   if (index === -1) return null;
 
   const current = store.links[index];
@@ -230,10 +327,14 @@ export async function updateLink(id: string, input: Partial<SmartLink>): Promise
   const updated: SmartLink = {
     ...current,
     ...input,
+    id: current.id,
+    userId: current.userId,
+    createdAt: current.createdAt,
     slug: nextSlug,
     notes: typeof input.notes === "string" ? input.notes.trim() : current.notes,
     isDeepLink: typeof input.isDeepLink === "boolean" ? input.isDeepLink : current.isDeepLink,
-    groupId: input.groupId !== undefined ? input.groupId : current.groupId,
+    forceExternalBrowser: typeof input.forceExternalBrowser === "boolean" ? input.forceExternalBrowser : Boolean(current.forceExternalBrowser),
+    groupId: input.groupId !== undefined && isGroupOwnedByUser(store, userId, input.groupId) ? input.groupId : input.groupId === null ? null : current.groupId,
     tags: input.tags ? normalizeTags(input.tags) : current.tags,
     status: input.status ? normalizeStatus(input.status) : current.status,
     updatedAt: new Date().toISOString()
@@ -245,39 +346,43 @@ export async function updateLink(id: string, input: Partial<SmartLink>): Promise
   return withStats([updated], store.events)[0];
 }
 
-export async function deleteLink(id: string): Promise<boolean> {
+export async function deleteLink(id: string, userId: string): Promise<boolean> {
   const store = await getStore();
   const previousLength = store.links.length;
-  store.links = store.links.filter((link) => link.id !== id);
+  store.links = store.links.filter((link) => link.id !== id || link.userId !== userId);
   store.events = store.events.filter((event) => event.linkId !== id);
   invalidateIndexes();
   await persistStore(store);
   return store.links.length !== previousLength;
 }
 
-export async function getSummary(): Promise<DashboardSummary> {
+export async function getSummary(userId: string): Promise<DashboardSummary> {
   const store = await getStore();
-  const links = withStats(store.links, store.events);
-  const activeLinks = store.links.filter((link) => link.status === "active").length;
-  const totalClicks = store.events.length;
-  const uniqueVisitors = new Set(store.events.map((event) => event.visitorKey)).size;
-  const deepLinkedClicks = store.events.filter((event) => event.destination.startsWith("myapp://") || event.destination.startsWith("intent://")).length;
+  const rawLinks = linksForUser(store, userId);
+  const events = eventsForLinks(store, rawLinks, userId);
+  const links = withStats(rawLinks, events);
+  const activeLinks = rawLinks.filter((link) => link.status === "active").length;
+  const totalClicks = events.length;
+  const uniqueVisitors = new Set(events.map((event) => event.visitorKey)).size;
+  const deepLinkedClicks = events.filter((event) => event.destination.startsWith("myapp://") || event.destination.startsWith("intent://")).length;
 
   return {
     totalClicks,
     activeLinks,
     uniqueVisitors,
     deepLinkRate: totalClicks ? Math.round((deepLinkedClicks / totalClicks) * 100) : 0,
-    trend: buildSeries(store.events, 14),
+    trend: buildSeries(events, 14),
     topLinks: links.sort((a, b) => b.clicks - a.clicks).slice(0, 5),
-    recentEvents: store.events.slice(0, 7)
+    recentEvents: events.slice(0, 7)
   };
 }
 
-export async function getAnalytics(days = 30): Promise<AnalyticsPayload> {
+export async function getAnalytics(userId: string, days = 30): Promise<AnalyticsPayload> {
   const store = await getStore();
+  const links = linksForUser(store, userId);
+  const userEvents = eventsForLinks(store, links, userId);
   const since = Date.now() - days * 24 * 60 * 60 * 1000;
-  const events = store.events.filter((event) => new Date(event.occurredAt).getTime() >= since);
+  const events = userEvents.filter((event) => new Date(event.occurredAt).getTime() >= since);
 
   return {
     clicksOverTime: buildSeries(events, Math.min(days, 30)),
@@ -286,7 +391,7 @@ export async function getAnalytics(days = 30): Promise<AnalyticsPayload> {
     referrerBreakdown: breakdown(events.map((event) => event.referrer)),
     browserBreakdown: breakdown(events.map((event) => event.browser || "Unknown")),
     dailyBreakdown: buildDailyBreakdown(events, Math.min(days, 30)),
-    linkPerformance: withStats(store.links, events).sort((a, b) => b.clicks - a.clicks),
+    linkPerformance: withStats(links, events).sort((a, b) => b.clicks - a.clicks),
     recentEvents: events.slice(0, 20)
   };
 }
@@ -298,6 +403,111 @@ async function persistStore(store: StoreShape): Promise<void> {
   }
   await fs.mkdir(dataDir, { recursive: true });
   await fs.writeFile(dataFile, JSON.stringify(store, null, 2));
+}
+
+function linksForUser(store: StoreShape, userId: string): SmartLink[] {
+  return store.links.filter((link) => link.userId === userId);
+}
+
+function groupsForUser(store: StoreShape, userId: string): LinkGroup[] {
+  return store.groups.filter((group) => group.userId === userId);
+}
+
+function eventsForLinks(store: StoreShape, links: SmartLink[], userId: string): ClickEvent[] {
+  const linkIds = new Set(links.map((link) => link.id));
+  return store.events.filter((event) => event.userId === userId || linkIds.has(event.linkId));
+}
+
+function isGroupOwnedByUser(store: StoreShape, userId: string, groupId: string | null | undefined): boolean {
+  if (!groupId) return true;
+  return groupsForUser(store, userId).some((group) => group.id === groupId);
+}
+
+function withEventOwner(store: StoreShape, event: ClickEvent): ClickEvent {
+  if (event.userId) return event;
+  const link = store.links.find((candidate) => candidate.id === event.linkId || candidate.slug === event.slug);
+  return link?.userId ? { ...event, userId: link.userId } : event;
+}
+
+function migrateOwnedData(store: StoreShape): void {
+  if (store.users.length !== 1) return;
+  const userId = store.users[0].id;
+  let changed = false;
+
+  for (const link of store.links) {
+    if (!link.userId) {
+      link.userId = userId;
+      changed = true;
+    }
+  }
+  for (const group of store.groups) {
+    if (!group.userId) {
+      group.userId = userId;
+      changed = true;
+    }
+  }
+  for (let index = 0; index < store.events.length; index += 1) {
+    const owned = withEventOwner(store, store.events[index]);
+    if (owned !== store.events[index]) {
+      store.events[index] = owned;
+      changed = true;
+    }
+  }
+
+  if (changed) schedulePersist(store);
+}
+
+function claimLegacyData(store: StoreShape, userId: string): void {
+  for (const link of store.links) {
+    if (!link.userId) link.userId = userId;
+  }
+  for (const group of store.groups) {
+    if (!group.userId) group.userId = userId;
+  }
+  for (let index = 0; index < store.events.length; index += 1) {
+    store.events[index] = withEventOwner(store, store.events[index]);
+  }
+}
+
+function ensureDefaultGroups(store: StoreShape, userId: string): void {
+  if (groupsForUser(store, userId).length) return;
+  store.groups.push(...seedGroups.map((group) => ({ ...group, userId })));
+}
+
+function publicUser(user: StoredUser): AuthUser {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    createdAt: user.createdAt
+  };
+}
+
+function normalizeEmail(value: string | undefined): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString("base64url");
+  const hash = crypto.scryptSync(password, salt, 64).toString("base64url");
+  return `scrypt:${salt}:${hash}`;
+}
+
+function verifyPassword(password: string, storedHash: string): boolean {
+  const [method, salt, expected] = storedHash.split(":");
+  if (method !== "scrypt" || !salt || !expected) return false;
+  const actual = crypto.scryptSync(password, salt, 64);
+  const expectedBuffer = Buffer.from(expected, "base64url");
+  return expectedBuffer.length === actual.length && crypto.timingSafeEqual(expectedBuffer, actual);
+}
+
+function hashSessionId(sessionId: string): string {
+  return crypto.createHash("sha256").update(sessionId).digest("base64url");
+}
+
+function pruneExpiredSessions(sessions: AuthSession[]): AuthSession[] {
+  const now = Date.now();
+  return sessions.filter((session) => new Date(session.expiresAt).getTime() > now);
 }
 
 function schedulePersist(store: StoreShape): void {

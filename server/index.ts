@@ -3,11 +3,30 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Request } from "express";
-import { addClickEvent, addClickEvents, createGroup, createLink, deleteLink, findLinkById, findLinkBySlug, getAnalytics, getSummary, listGroups, listLinks, listRawLinks, updateLink } from "./storage.js";
+import {
+  addClickEvent,
+  addClickEvents,
+  authenticateUser,
+  createGroup,
+  createLink,
+  createSession,
+  createUserAccount,
+  deleteLink,
+  deleteSession,
+  findLinkById,
+  findLinkBySlug,
+  getAnalytics,
+  getSummary,
+  getUserBySession,
+  listGroups,
+  listLinks,
+  listRawLinks,
+  updateLink
+} from "./storage.js";
 import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
 import { classifyReferrer, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
-import { toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
-import type { ClickEvent } from "../shared/types.js";
+import { externalBrowserRedirect, isHttpUrl, isInAppBrowser, selectWebFallback, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
+import type { AuthUser, ClickEvent } from "../shared/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,94 +42,45 @@ app.get("/api/health", (_request, response) => {
   response.json({ ok: true, service: "tapsocials", edgeSync: isEdgeSyncConfigured() });
 });
 
-app.get("/api/links", async (_request, response, next) => {
+app.get("/api/auth/me", async (request, response, next) => {
   try {
-    response.json(await listLinks());
+    response.json({ user: await getRequestUser(request) });
   } catch (error) {
     next(error);
   }
 });
 
-app.get("/api/groups", async (_request, response, next) => {
+app.post("/api/auth/signup", async (request, response, next) => {
   try {
-    response.json(await listGroups());
+    const user = await createUserAccount(request.body || {});
+    const sessionId = await createSession(user.id);
+    setSessionCookie(request, response, sessionId);
+    response.status(201).json({ user });
   } catch (error) {
-    next(error);
+    response.status(400).json({ error: error instanceof Error ? error.message : "Unable to create account." });
   }
 });
 
-app.post("/api/groups", async (request, response, next) => {
+app.post("/api/auth/login", async (request, response, next) => {
   try {
-    if (!request.body?.name) {
-      response.status(400).json({ error: "Group name is required." });
+    const user = await authenticateUser(request.body?.email, request.body?.password);
+    if (!user) {
+      response.status(401).json({ error: "Invalid email or password." });
       return;
     }
-    response.status(201).json(await createGroup(request.body));
+    const sessionId = await createSession(user.id);
+    setSessionCookie(request, response, sessionId);
+    response.json({ user });
   } catch (error) {
     next(error);
   }
 });
 
-app.post("/api/links", async (request, response, next) => {
+app.post("/api/auth/logout", async (request, response, next) => {
   try {
-    if (!request.body?.name || !request.body?.fallbackUrl) {
-      response.status(400).json({ error: "Name and fallback URL are required." });
-      return;
-    }
-    const link = await createLink(request.body);
-    await syncLinkToEdge(link).catch((error) => console.error("Failed to sync link to edge", error));
-    response.status(201).json(link);
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.put("/api/links/:id", async (request, response, next) => {
-  try {
-    const previous = await findLinkById(request.params.id);
-    const updated = await updateLink(request.params.id, request.body);
-    if (!updated) {
-      response.status(404).json({ error: "Link not found." });
-      return;
-    }
-    if (previous && previous.slug !== updated.slug) {
-      await deleteLinkFromEdge(previous.slug).catch((error) => console.error("Failed to delete old edge slug", error));
-      await syncLinkToEdge(updated).catch((error) => console.error("Failed to sync link to edge", error));
-    } else {
-      await syncLinkToEdge(updated).catch((error) => console.error("Failed to sync link to edge", error));
-    }
-    response.json(updated);
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.delete("/api/links/:id", async (request, response, next) => {
-  try {
-    const previous = await findLinkById(request.params.id);
-    const deleted = await deleteLink(request.params.id);
-    if (deleted && previous) {
-      await deleteLinkFromEdge(previous.slug).catch((error) => console.error("Failed to delete edge link", error));
-      await syncLinksToEdge(await listRawLinks()).catch((error) => console.error("Failed to reconcile edge links", error));
-    }
-    response.status(deleted ? 204 : 404).end();
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.get("/api/summary", async (_request, response, next) => {
-  try {
-    response.json(await getSummary());
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.get("/api/analytics", async (request, response, next) => {
-  try {
-    const days = Math.max(7, Math.min(90, Number(request.query.days || 30)));
-    response.json(await getAnalytics(days));
+    await deleteSession(readSessionCookie(request));
+    clearSessionCookie(request, response);
+    response.status(204).end();
   } catch (error) {
     next(error);
   }
@@ -160,6 +130,103 @@ app.post("/api/edge/clicks/batch", async (request, response, next) => {
   }
 });
 
+app.use("/api", requireAuth);
+
+app.get("/api/links", async (_request, response, next) => {
+  try {
+    response.json(await listLinks(currentUser(response).id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/groups", async (_request, response, next) => {
+  try {
+    response.json(await listGroups(currentUser(response).id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/groups", async (request, response, next) => {
+  try {
+    if (!request.body?.name) {
+      response.status(400).json({ error: "Group name is required." });
+      return;
+    }
+    response.status(201).json(await createGroup(request.body, currentUser(response).id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/links", async (request, response, next) => {
+  try {
+    if (!request.body?.name || !request.body?.fallbackUrl) {
+      response.status(400).json({ error: "Name and fallback URL are required." });
+      return;
+    }
+    const link = await createLink(request.body, currentUser(response).id);
+    await syncLinkToEdge(link).catch((error) => console.error("Failed to sync link to edge", error));
+    response.status(201).json(link);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/links/:id", async (request, response, next) => {
+  try {
+    const userId = currentUser(response).id;
+    const previous = await findLinkById(request.params.id, userId);
+    const updated = await updateLink(request.params.id, request.body, userId);
+    if (!updated) {
+      response.status(404).json({ error: "Link not found." });
+      return;
+    }
+    if (previous && previous.slug !== updated.slug) {
+      await deleteLinkFromEdge(previous.slug).catch((error) => console.error("Failed to delete old edge slug", error));
+      await syncLinkToEdge(updated).catch((error) => console.error("Failed to sync link to edge", error));
+    } else {
+      await syncLinkToEdge(updated).catch((error) => console.error("Failed to sync link to edge", error));
+    }
+    response.json(updated);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/links/:id", async (request, response, next) => {
+  try {
+    const userId = currentUser(response).id;
+    const previous = await findLinkById(request.params.id, userId);
+    const deleted = await deleteLink(request.params.id, userId);
+    if (deleted && previous) {
+      await deleteLinkFromEdge(previous.slug).catch((error) => console.error("Failed to delete edge link", error));
+      await syncLinksToEdge(await listRawLinks()).catch((error) => console.error("Failed to reconcile edge links", error));
+    }
+    response.status(deleted ? 204 : 404).end();
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/summary", async (_request, response, next) => {
+  try {
+    response.json(await getSummary(currentUser(response).id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/analytics", async (request, response, next) => {
+  try {
+    const days = Math.max(7, Math.min(90, Number(request.query.days || 30)));
+    response.json(await getAnalytics(currentUser(response).id, days));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/l/:slug", redirectSlug);
 app.get("/:slug", (request, response, next) => {
   const reserved = new Set(["dashboard", "api", "assets", "favicon.png"]);
@@ -198,6 +265,17 @@ async function redirectSlug(request: express.Request, response: express.Response
       console.error("Failed to record click", error);
     });
 
+    const webDestination = selectWebFallback(link);
+    const externalDestination = link.forceExternalBrowser && isHttpUrl(webDestination) ? externalBrowserRedirect(webDestination, device) : null;
+    if (externalDestination) {
+      response.redirect(302, externalDestination);
+      return;
+    }
+    if (link.forceExternalBrowser && device === "iOS" && isInAppBrowser(request.get("user-agent") || "") && isHttpUrl(webDestination)) {
+      response.status(200).send(renderOpenInBrowser(webDestination));
+      return;
+    }
+
     response.redirect(302, destination);
   } catch (error) {
     next(error);
@@ -225,6 +303,76 @@ function clientIp(request: Request): string {
   return request.ip || "local";
 }
 
+async function requireAuth(request: express.Request, response: express.Response, next: express.NextFunction) {
+  try {
+    const user = await getRequestUser(request);
+    if (!user) {
+      response.status(401).json({ error: "Authentication required." });
+      return;
+    }
+    response.locals.user = user;
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function getRequestUser(request: Request): Promise<AuthUser | null> {
+  return getUserBySession(readSessionCookie(request));
+}
+
+function currentUser(response: express.Response): AuthUser {
+  const user = response.locals.user as AuthUser | undefined;
+  if (!user) throw new Error("Authenticated user missing from request.");
+  return user;
+}
+
+function readSessionCookie(request: Request): string | undefined {
+  const cookies = parseCookies(request.get("cookie") || "");
+  return cookies.ts_session;
+}
+
+function setSessionCookie(request: Request, response: express.Response, sessionId: string): void {
+  response.setHeader("Set-Cookie", serializeSessionCookie(request, sessionId, 30 * 24 * 60 * 60));
+}
+
+function clearSessionCookie(request: Request, response: express.Response): void {
+  response.setHeader("Set-Cookie", serializeSessionCookie(request, "", 0));
+}
+
+function serializeSessionCookie(request: Request, value: string, maxAge: number): string {
+  const parts = [
+    `ts_session=${encodeURIComponent(value)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${maxAge}`
+  ];
+  const domain = cookieDomain(request);
+  if (domain) parts.push(`Domain=${domain}`);
+  if (isSecureRequest(request)) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function parseCookies(header: string): Record<string, string> {
+  return header.split(";").reduce<Record<string, string>>((cookies, part) => {
+    const [name, ...rest] = part.trim().split("=");
+    if (!name) return cookies;
+    cookies[name] = decodeURIComponent(rest.join("="));
+    return cookies;
+  }, {});
+}
+
+function cookieDomain(request: Request): string | null {
+  const host = (request.get("x-forwarded-host") || request.get("host") || "").split(":")[0].toLowerCase();
+  if (host === "tapsocials.com" || host.endsWith(".tapsocials.com")) return ".tapsocials.com";
+  return null;
+}
+
+function isSecureRequest(request: Request): boolean {
+  return request.secure || request.get("x-forwarded-proto") === "https" || process.env.NODE_ENV === "production";
+}
+
 function authorizeEdgeRequest(request: Request, response: express.Response): boolean {
   const secret = process.env.EDGE_SYNC_SECRET;
   if (!secret && process.env.NODE_ENV !== "production") return true;
@@ -232,6 +380,49 @@ function authorizeEdgeRequest(request: Request, response: express.Response): boo
   if (secret && provided === secret) return true;
   response.status(401).json({ error: "Unauthorized edge request." });
   return false;
+}
+
+function renderOpenInBrowser(destination: string): string {
+  const safeDestination = escapeHtml(destination);
+  const jsDestination = JSON.stringify(destination);
+  return `<!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <meta http-equiv="refresh" content="1;url=${safeDestination}" />
+      <title>Opening link</title>
+      <style>
+        body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #09090b; color: #f2f2f3; }
+        main { width: min(420px, calc(100vw - 32px)); border: 1px solid #27272f; border-radius: 10px; background: #0f0f12; padding: 28px; }
+        h1 { margin: 0 0 8px; font-size: 22px; }
+        p { margin: 0 0 18px; color: #a1a1aa; line-height: 1.5; }
+        a { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; border-radius: 8px; background: #22d3ee; color: #071014; padding: 0 14px; font-weight: 700; text-decoration: none; }
+      </style>
+      <script>
+        window.setTimeout(function () {
+          window.location.replace(${jsDestination});
+        }, 250);
+      </script>
+    </head>
+    <body>
+      <main>
+        <h1>Opening link</h1>
+        <p>If your social app keeps this page inside its browser, use the app menu and choose Open in browser.</p>
+        <a href="${safeDestination}" rel="noreferrer">Continue</a>
+      </main>
+    </body>
+  </html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    if (character === "&") return "&amp;";
+    if (character === "<") return "&lt;";
+    if (character === ">") return "&gt;";
+    if (character === "\"") return "&quot;";
+    return "&#039;";
+  });
 }
 
 function renderMissingLink(): string {

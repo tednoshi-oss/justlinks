@@ -1,4 +1,4 @@
-import type { AnalyticsPayload, DashboardSummary, LinkGroup, LinkWithStats, SmartLink } from "../shared/types";
+import type { AnalyticsPayload, AuthUser, DashboardSummary, LinkGroup, LinkWithStats, SmartLink } from "../shared/types";
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -11,13 +11,44 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(message || `Request failed: ${response.status}`);
+    let parsedError: string | undefined;
+    try {
+      const parsed = JSON.parse(message) as { error?: string };
+      parsedError = parsed.error;
+    } catch {
+      parsedError = undefined;
+    }
+    throw new Error(parsedError || message || `Request failed: ${response.status}`);
   }
 
   return response.json() as Promise<T>;
 }
 
 export const api = {
+  me: async () => {
+    const data = await requestJson<{ user: AuthUser | null }>("/api/auth/me");
+    return data.user;
+  },
+  signup: async (payload: { email: string; password: string; name?: string }) => {
+    const data = await requestJson<{ user: AuthUser }>("/api/auth/signup", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    return data.user;
+  },
+  login: async (payload: { email: string; password: string }) => {
+    const data = await requestJson<{ user: AuthUser }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    return data.user;
+  },
+  logout: async () => {
+    const response = await fetch("/api/auth/logout", { method: "POST" });
+    if (!response.ok && response.status !== 204) {
+      throw new Error(`Logout failed: ${response.status}`);
+    }
+  },
   summary: () => requestJson<DashboardSummary>("/api/summary"),
   analytics: (days = 30) => requestJson<AnalyticsPayload>(`/api/analytics?days=${days}`),
   links: () => requestJson<LinkWithStats[]>("/api/links"),

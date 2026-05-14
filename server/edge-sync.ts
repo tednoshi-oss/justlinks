@@ -111,7 +111,8 @@ function deletedEdgeLink(slug: string): EdgeLinkConfig {
     iosUrl: "",
     androidUrl: "",
     webUrl: "",
-    fallbackUrl: ""
+    fallbackUrl: "",
+    forceExternalBrowser: false
   };
 }
 

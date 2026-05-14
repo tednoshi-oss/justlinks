@@ -15,7 +15,8 @@ Open `http://localhost:4174/dashboard/links`.
 ## What is included
 
 - Dashboard metrics, top links, and recent click activity.
-- Link creation with title, destination URL, random/custom short code, notes, deep-link toggle, tags, and local stats.
+- User signup/login with private links, groups, and analytics per account.
+- Link creation with title, destination URL, mobile deep-link targets, random/custom short code, notes, tags, external-browser helper mode, and local stats.
 - Redirect route at `/:slug` with device-aware routing. `/l/:slug` still works as a compatibility alias.
 - Analytics for clicks over time, device, country, referrer, link performance, and recent events.
 - Local JSON persistence for development.
@@ -30,6 +31,8 @@ Open `http://localhost:4174/dashboard/links`.
 - Other: `fallbackUrl`
 
 For testing, append `?target=ios`, `?target=android`, or `?target=web`.
+
+External-browser helper mode can wrap Android web destinations in an `intent://` URL from social in-app browsers. iOS does not allow a website to force Safari from every embedded browser, so iOS receives a small fallback page with an automatic continue plus manual open option when an in-app browser blocks the handoff.
 
 ## Production scale plan
 

@@ -8,6 +8,7 @@ export interface EdgeLinkConfig {
   androidUrl: string;
   webUrl: string;
   fallbackUrl: string;
+  forceExternalBrowser?: boolean;
 }
 
 export interface EdgeClickEvent {
@@ -34,7 +35,8 @@ export function toEdgeLink(link: SmartLink): EdgeLinkConfig {
     iosUrl: link.iosUrl,
     androidUrl: link.androidUrl,
     webUrl: link.webUrl,
-    fallbackUrl: link.fallbackUrl
+    fallbackUrl: link.fallbackUrl,
+    forceExternalBrowser: Boolean(link.forceExternalBrowser)
   };
 }
 
@@ -80,6 +82,35 @@ export function selectDestination(link: EdgeLinkConfig, device: DeviceType): str
   if (device === "Android" && link.androidUrl) return link.androidUrl;
   if (device === "Desktop" && link.webUrl) return link.webUrl;
   return link.fallbackUrl || link.webUrl || link.iosUrl || link.androidUrl;
+}
+
+export function selectWebFallback(link: EdgeLinkConfig): string {
+  return link.webUrl || link.fallbackUrl || link.iosUrl || link.androidUrl;
+}
+
+export function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+export function isInAppBrowser(userAgent = ""): boolean {
+  return /FBAN|FBAV|FB_IAB|Instagram|Line\/|TikTok|Twitter|Pinterest|Snapchat|LinkedInApp|Reddit|wv\)|; wv/.test(userAgent);
+}
+
+export function androidExternalBrowserIntent(destination: string): string | null {
+  if (!isHttpUrl(destination)) return null;
+  const url = new URL(destination);
+  const scheme = url.protocol.replace(":", "");
+  return `intent://${url.host}${url.pathname}${url.search}${url.hash}#Intent;scheme=${scheme};S.browser_fallback_url=${encodeURIComponent(destination)};end`;
+}
+
+export function externalBrowserRedirect(destination: string, device: DeviceType): string | null {
+  if (device === "Android") return androidExternalBrowserIntent(destination);
+  return null;
 }
 
 export function classifyReferrer(value?: string | null): string {
