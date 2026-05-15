@@ -12,6 +12,7 @@ import {
   renderDeepLinkEscapePage,
   selectWebFallback,
   selectDestination,
+  shouldServeFastDeepLinkEscape,
   shouldUseBrowserEscape,
   slugFromPath
 } from "../shared/edge";
@@ -65,10 +66,22 @@ export default {
     const slug = slugFromPath(url.pathname);
     if (!slug) return notFound();
 
+    const userAgent = request.headers.get("user-agent") || "";
+    if (
+      shouldServeFastDeepLinkEscape({
+        pathname: url.pathname,
+        searchParams: url.searchParams,
+        userAgent,
+        referrer: request.headers.get("referer")
+      })
+    ) {
+      return htmlResponse(renderDeepLinkEscapePage(deepLinkEscapeUrl(request.url), userAgent));
+    }
+
     const link = await getEdgeLink(slug, env, context);
     if (!link || link.status !== "active") return notFound();
 
-    const device = detectDevice(request.headers.get("user-agent") || "", url.searchParams.get("target") || "");
+    const device = detectDevice(userAgent, url.searchParams.get("target") || "");
     const webDestination = selectWebFallback(link);
     const browserEscape = shouldUseBrowserEscape(link);
     const destination = browserEscape ? webDestination : selectDestination(link, device);

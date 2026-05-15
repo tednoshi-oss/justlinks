@@ -27,7 +27,7 @@ import {
 } from "./storage.js";
 import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
 import { classifyReferrer, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
-import { deepLinkEscapeUrl, isEscapedBrowserRequest, isHttpUrl, isMobileDevice, renderDeepLinkEscapePage, selectWebFallback, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
+import { deepLinkEscapeUrl, isEscapedBrowserRequest, isHttpUrl, isMobileDevice, renderDeepLinkEscapePage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
 import type { AuthUser, ClickEvent } from "../shared/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -263,14 +263,27 @@ app.get("/:slug", (request, response, next) => {
 
 async function redirectSlug(request: express.Request, response: express.Response, next: express.NextFunction) {
   try {
+    const userAgent = request.get("user-agent") || "";
+    if (
+      shouldServeFastDeepLinkEscape({
+        pathname: request.path,
+        searchParams: new URLSearchParams(request.query as Record<string, string>),
+        userAgent,
+        referrer: request.get("referer")
+      })
+    ) {
+      response.status(200).send(renderDeepLinkEscapePage(deepLinkEscapeUrl(absoluteRequestUrl(request)), userAgent));
+      return;
+    }
+
     const link = await findLinkBySlug(request.params.slug);
     if (!link || link.status !== "active") {
       response.status(404).send(renderMissingLink());
       return;
     }
 
-    const device = detectDevice(request.get("user-agent"), String(request.query.target || ""));
-    const browser = detectBrowser(request.get("user-agent") || "");
+    const device = detectDevice(userAgent, String(request.query.target || ""));
+    const browser = detectBrowser(userAgent);
     const webDestination = selectWebFallback(link);
     const browserEscape = shouldUseBrowserEscape(link);
     const destination = browserEscape ? webDestination : selectDestination(link, device);
@@ -296,7 +309,7 @@ async function redirectSlug(request: express.Request, response: express.Response
         response.redirect(302, webDestination);
         return;
       }
-      response.status(200).send(renderDeepLinkEscapePage(deepLinkEscapeUrl(absoluteRequestUrl(request)), request.get("user-agent") || ""));
+      response.status(200).send(renderDeepLinkEscapePage(deepLinkEscapeUrl(absoluteRequestUrl(request)), userAgent));
       return;
     }
 

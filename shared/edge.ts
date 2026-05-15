@@ -111,6 +111,36 @@ export function shouldUseBrowserEscape(link: Pick<EdgeLinkConfig, "slug" | "isDe
   return Boolean(link.forceExternalBrowser || link.isDeepLink || link.slug.startsWith("d-"));
 }
 
+export function shouldServeFastDeepLinkEscape({
+  pathname,
+  searchParams,
+  userAgent = "",
+  referrer = ""
+}: {
+  pathname: string;
+  searchParams: URLSearchParams;
+  userAgent?: string;
+  referrer?: string | null;
+}): boolean {
+  if (isEscapedBrowserRequest(searchParams)) return false;
+
+  const slug = slugFromPath(pathname);
+  if (!slug?.startsWith("d-")) return false;
+
+  const device = detectDevice(userAgent);
+  if (!isMobileDevice(device)) return false;
+
+  const ua = userAgent.toLowerCase();
+  if (ua.includes("instagram")) return false;
+
+  const ref = (referrer || "").toLowerCase();
+  const metaReferrers = ["facebook.com", "l.facebook.com", "lm.facebook.com", "m.facebook.com", "threads.net", "whatsapp.com", "wa.me", "web.whatsapp.com", "tiktok.com", "vm.tiktok.com"];
+  if (metaReferrers.some((pattern) => ref.includes(pattern))) return false;
+  if (/FBAN|FBAV|FB_IAB|Threads|TikTok|BytedanceWebview/i.test(userAgent)) return false;
+
+  return true;
+}
+
 export function isEscapedBrowserRequest(searchParams: URLSearchParams): boolean {
   return searchParams.get("escaped") === "1";
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SmartLink } from "../shared/types.js";
-import { androidExternalBrowserIntent, deepLinkEscapeUrl, externalBrowserEscapeAttemptUrl, isEscapedBrowserRequest, isInAppBrowser, renderDeepLinkEscapePage, shouldUseBrowserEscape } from "../shared/edge.js";
+import { androidExternalBrowserIntent, deepLinkEscapeUrl, externalBrowserEscapeAttemptUrl, isEscapedBrowserRequest, isInAppBrowser, renderDeepLinkEscapePage, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape } from "../shared/edge.js";
 import { cleanSlug, detectDevice, selectDestination } from "../server/routing.js";
 
 const link: SmartLink = {
@@ -68,4 +68,17 @@ test("iOS deep link escape page uses fast Safari trampoline with fallback", () =
   assert.match(html, /x-safari-https/);
   assert.match(html, /com-apple-mobilesafari-tab/);
   assert.match(html, /shortcuts:\/\/x-callback-url\/run-shortcut/);
+});
+
+test("fast deep link escape runs before link lookup for Reddit and Telegram style traffic", () => {
+  const redditIos = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Reddit/2026";
+  const telegramAndroid = "Mozilla/5.0 (Linux; Android 14; Pixel) AppleWebKit/537.36 Telegram-Android/11 Chrome/120 Mobile Safari/537.36";
+
+  assert.equal(shouldServeFastDeepLinkEscape({ pathname: "/d-PAXGfRB1", searchParams: new URLSearchParams(), userAgent: redditIos }), true);
+  assert.equal(shouldServeFastDeepLinkEscape({ pathname: "/d-PAXGfRB1", searchParams: new URLSearchParams(), userAgent: telegramAndroid }), true);
+  assert.equal(shouldServeFastDeepLinkEscape({ pathname: "/d-PAXGfRB1", searchParams: new URLSearchParams("escaped=1"), userAgent: redditIos }), false);
+  assert.equal(shouldServeFastDeepLinkEscape({ pathname: "/plain-link", searchParams: new URLSearchParams(), userAgent: redditIos }), false);
+  assert.equal(shouldServeFastDeepLinkEscape({ pathname: "/d-PAXGfRB1", searchParams: new URLSearchParams(), userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X)" }), false);
+  assert.equal(shouldServeFastDeepLinkEscape({ pathname: "/d-PAXGfRB1", searchParams: new URLSearchParams(), userAgent: `${redditIos} Instagram` }), false);
+  assert.equal(shouldServeFastDeepLinkEscape({ pathname: "/d-PAXGfRB1", searchParams: new URLSearchParams(), userAgent: "FBAN/FBIOS", referrer: "https://facebook.com/" }), false);
 });
