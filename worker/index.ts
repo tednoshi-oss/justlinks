@@ -124,7 +124,7 @@ const debugOpenTargetSlug = "d-pctdmkl7";
 const debugOpenVariants = [
   ["a", "ForLinks order", "x-safari first, Safari tab second"],
   ["b", "Safari tab first", "com-apple-mobilesafari-tab first, x-safari second"],
-  ["c", "Anchor click", "programmatic anchor click to x-safari"],
+  ["c", "Anchor click", "iOS opens Safari, Android opens Chrome"],
   ["d", "window.open", "window.open to x-safari"],
   ["e", "replace", "location.replace to x-safari"],
   ["f", "meta refresh", "meta refresh to x-safari"],
@@ -137,6 +137,7 @@ function handleDebugOpenRequest(url: URL): Response {
   const target = debugOpenTarget(url);
   const safari = safariSchemeUrl(target);
   const safariTab = `com-apple-mobilesafari-tab:${target}`;
+  const chromeIntent = androidIntentUrl(target);
 
   if (!variant) {
     return htmlResponse(renderDebugOpenIndex(url, target), 200, noCacheHeaders());
@@ -156,7 +157,7 @@ function handleDebugOpenRequest(url: URL): Response {
     });
   }
 
-  return htmlResponse(renderDebugOpenVariant(variant, target, safari, safariTab), 200, noCacheHeaders());
+  return htmlResponse(renderDebugOpenVariant(variant, target, safari, safariTab, chromeIntent), 200, noCacheHeaders());
 }
 
 function debugOpenTarget(url: URL): string {
@@ -171,6 +172,11 @@ function safariSchemeUrl(target: string): string {
   return `x-safari-https://${target.replace(/^https?:\/\//, "")}`;
 }
 
+function androidIntentUrl(target: string): string {
+  const url = new URL(target);
+  return `intent://${url.host}${url.pathname}${url.search}${url.hash}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(target)};end`;
+}
+
 function renderDebugOpenIndex(url: URL, target: string): string {
   const links = debugOpenVariants
     .map(([id, name, description]) => {
@@ -183,10 +189,11 @@ function renderDebugOpenIndex(url: URL, target: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TapSocials Open Test</title>${debugOpenStyles()}</head><body><main><p class="eyebrow">TapSocials debug</p><h1>Open Browser Test Lab</h1><p class="copy">Send each direct test link in Reddit and tap it from your iPhone. The one that opens Safari without the popup is the method we will move into production.</p><section>${links}</section><p class="target">Target: ${escapeHtml(target)}</p></main></body></html>`;
 }
 
-function renderDebugOpenVariant(variant: string, target: string, safari: string, safariTab: string): string {
+function renderDebugOpenVariant(variant: string, target: string, safari: string, safariTab: string, chromeIntent: string): string {
   const jsTarget = JSON.stringify(target);
   const jsSafari = JSON.stringify(safari);
   const jsSafariTab = JSON.stringify(safariTab);
+  const jsChromeIntent = JSON.stringify(chromeIntent);
   const label = debugOpenVariants.find(([id]) => id === variant)?.[1] || "Test";
   let script = "";
   let extraHead = "";
@@ -207,12 +214,12 @@ function renderDebugOpenVariant(variant: string, target: string, safari: string,
   } else if (variant === "c") {
     script = `
       var a = document.createElement("a");
-      a.href = safari;
+      a.href = /Android/i.test(navigator.userAgent || "") ? chromeIntent : safari;
       a.target = "_self";
       a.rel = "noreferrer";
       document.body.appendChild(a);
       a.click();
-      setTimeout(function () { window.location.href = safariTab; }, 200);
+      if (!/Android/i.test(navigator.userAgent || "")) setTimeout(function () { window.location.href = safariTab; }, 200);
     `;
   } else if (variant === "d") {
     script = `
@@ -238,11 +245,14 @@ function renderDebugOpenVariant(variant: string, target: string, safari: string,
     `;
   }
 
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${extraHead}<title>${escapeHtml(label)}</title>${debugOpenStyles()}</head><body><main><p class="eyebrow">Test ${escapeHtml(variant.toUpperCase())}</p><h1>${escapeHtml(label)}</h1><p class="copy">Trying to open Safari now. If Reddit shows no popup for this one, tell me the letter.</p><a class="button" href="${escapeHtml(safari)}">Open manually</a></main><script>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${extraHead}<title>${escapeHtml(label)}</title>${debugOpenStyles()}</head><body><main><p class="eyebrow">Test ${escapeHtml(variant.toUpperCase())}</p><h1>${escapeHtml(label)}</h1><p class="copy">Trying to open your outside browser now. If Reddit shows no popup for this one, tell me the letter.</p><a class="button" href="${escapeHtml(safari)}">Open manually</a></main><script>
     (function () {
       var target = ${jsTarget};
       var safari = ${jsSafari};
       var safariTab = ${jsSafariTab};
+      var chromeIntent = ${jsChromeIntent};
+      var manual = document.querySelector(".button");
+      if (manual && /Android/i.test(navigator.userAgent || "")) manual.href = chromeIntent;
       ${script}
     })();
   </script></body></html>`;

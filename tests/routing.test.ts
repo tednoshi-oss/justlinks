@@ -65,9 +65,17 @@ test("deep link browser escape targets the same short link before final redirect
 test("iOS deep link escape page uses fast Safari trampoline with fallback", () => {
   const html = renderDeepLinkEscapePage("https://tapsocials.com/d-test?escaped=1", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Reddit/2026");
   assert.match(html, /document\.write\(freshHtml\)/);
+  assert.match(html, /tapOpen\("x-safari-https/);
   assert.match(html, /x-safari-https/);
   assert.match(html, /com-apple-mobilesafari-tab/);
   assert.match(html, /shortcuts:\/\/x-callback-url\/run-shortcut/);
+});
+
+test("Android deep link escape page uses an anchor-click Chrome intent", () => {
+  const html = renderDeepLinkEscapePage("https://tapsocials.com/d-test?escaped=1", "Mozilla/5.0 (Linux; Android 14; Pixel) Reddit/2026");
+  assert.match(html, /tapOpen\(androidIntent\(uniqueUrl\)\)/);
+  assert.match(html, /intent:\/\//);
+  assert.match(html, /package=com\.android\.chrome/);
 });
 
 test("fast deep link escape runs before link lookup for Reddit and Telegram style traffic", () => {
