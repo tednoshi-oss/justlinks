@@ -48,6 +48,9 @@ const initialGroups: LinkGroup[] = [
   { id: "press", name: "Press", color: "#ec4899" }
 ];
 
+const shortLinkOrigin = "https://tapsocials.com";
+const shortLinkHost = new URL(shortLinkOrigin).host;
+
 export function App() {
   const [view, setView] = useState<View>(() => currentView());
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -832,7 +835,7 @@ function LinkRow({
   onStats: () => void;
   onRefresh: () => void;
 }) {
-  const href = `${window.location.origin}/${link.slug}`;
+  const href = shortLinkUrl(link.slug);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [menuOpen, setMenuOpen] = useState(false);
   const [groupMenuOpen, setGroupMenuOpen] = useState(false);
@@ -1004,7 +1007,7 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
           </div>
           {customCode || isEdit ? (
             <div className="short-input-row">
-              <span>{window.location.host}/</span>
+              <span>{shortLinkHost}/</span>
               <input value={shortCode} onChange={(event) => setShortCode(event.target.value.replace(/[^a-zA-Z0-9_-]/g, ""))} placeholder="my-link" />
               <button className="icon-button" type="button" title="Generate random code" aria-label="Generate random code" onClick={() => setShortCode(randomCode(deepLink))}>
                 <Sparkles size={15} />
@@ -1340,6 +1343,10 @@ function randomCode(deep = true): string {
 
 function shortCode(slug: string): string {
   return `/${slug}`;
+}
+
+function shortLinkUrl(slug: string): string {
+  return `${shortLinkOrigin}/${slug.replace(/^\/+/, "")}`;
 }
 
 function slugify(value: string): string {
