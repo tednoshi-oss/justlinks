@@ -1,6 +1,8 @@
 import {
   Activity,
   BarChart3,
+  BookOpen,
+  Briefcase,
   ChevronDown,
   Code2,
   Copy,
@@ -8,7 +10,6 @@ import {
   Edit3,
   Filter,
   Info,
-  KeyRound,
   LayoutDashboard,
   Link2,
   LogOut,
@@ -715,12 +716,9 @@ function ApiView({
   const [modalOpen, setModalOpen] = useState(false);
 
   return (
-    <section className="page-content api-page">
-      <section className="panel api-hero">
-        <div>
-          <h2>API Keys</h2>
-          <p>Use API keys to programmatically create links and fetch statistics.</p>
-        </div>
+      <section className="page-content api-page">
+      <section className="api-intro">
+        <p>Use API keys to programmatically create links and fetch statistics.</p>
         <button className="button primary" type="button" onClick={() => setModalOpen(true)}>
           <Plus size={16} />
           New Key
@@ -729,9 +727,11 @@ function ApiView({
 
       <div className="api-tabs" role="tablist" aria-label="API documentation">
         <button type="button" role="tab" aria-selected={tab === "manual"} className={tab === "manual" ? "active" : ""} onClick={() => setTab("manual")}>
+          <BookOpen size={16} />
           User Manual
         </button>
         <button type="button" role="tab" aria-selected={tab === "prompt"} className={tab === "prompt" ? "active" : ""} onClick={() => setTab("prompt")}>
+          <Briefcase size={16} />
           AI Integration Prompt
         </button>
       </div>
@@ -754,73 +754,102 @@ function ApiView({
 function ApiManual() {
   return (
     <section className="panel api-doc-panel" role="tabpanel" aria-label="User Manual">
-      <h3>TapSocials API - User Manual</h3>
-      <p>The TapSocials API lets you programmatically create tracking links, retrieve click statistics, list your links, and delete links. All requests use API keys.</p>
+      <h3>TapSocials API — User Manual</h3>
+      <p>The TapSocials API lets you programmatically create tracking links, retrieve click statistics, and manage your links — all authenticated via API keys.</p>
 
       <h4>Getting Started</h4>
-      <ul className="api-list">
-        <li>Click <strong>New Key</strong> above to create an API key.</li>
-        <li>Choose which permissions the key should have: Create Links, Deep Links, and Stats.</li>
-        <li><strong>Copy the key immediately.</strong> It is shown only once and cannot be retrieved later.</li>
-        <li>Include the key in every request using the <code>x-api-key</code> header.</li>
-      </ul>
+      <ol className="api-list numbered">
+        <li>Click <strong>"New Key"</strong> above to create an API key.</li>
+        <li>Choose which permissions the key should have (Create Links, Deep Links, Stats).</li>
+        <li><strong>Copy the key immediately</strong> — it's shown only once and cannot be retrieved later.</li>
+        <li>Include the key in all requests via the <code>x-api-key</code> header.</li>
+      </ol>
 
-      <ApiCodeBlock label="Base URL" code={apiBaseUrl} />
+      <h4>Base URL</h4>
+      <div className="api-base-url">
+        <code>{apiBaseUrl}</code>
+        <CopyButton text={apiBaseUrl} />
+      </div>
 
-      <ApiEndpoint method="POST" path="/create-link" permission="create_links" description="Creates a new tracking link. Deep links also require create_deep_links.">
+      <h4>Endpoints</h4>
+
+      <ApiEndpoint method="POST" path="/create-link" permission="create_links" description="Creates a new tracking link.">
+        <p>Request Body (JSON):</p>
         <ApiCodeBlock
-          label="Request Body"
           code={`{
-  "title": "My Campaign",
-  "destination_url": "https://example.com",
-  "is_deep_link": false,
-  "short_code": "my-slug"
+  "title": "My Campaign",           // required
+  "destination_url": "https://example.com", // required
+  "is_deep_link": false,            // optional, default false
+  "short_code": "my-slug"           // optional, auto-generated if omitted
 }`}
         />
+        <p>Response:</p>
         <ApiCodeBlock
-          label="Response"
           code={`{
   "link": {
-    "id": "lnk_...",
+    "id": "uuid",
     "title": "My Campaign",
     "short_code": "my-slug",
     "destination_url": "https://example.com",
     "is_deep_link": false,
-    "created_at": "2026-01-01T00:00:00.000Z"
+    "created_at": "2025-01-01T00:00:00Z"
   }
 }`}
         />
       </ApiEndpoint>
 
-      <ApiEndpoint method="GET" path="/get-stats?link_id=LINK_ID" permission="get_stats" description="Returns click analytics for one link.">
+      <ApiEndpoint method="GET" path="/get-stats?link_id=UUID" permission="get_stats" description="Returns click analytics for one link.">
+        <p>Response:</p>
         <ApiCodeBlock
-          label="Response"
           code={`{
   "link": { "id": "...", "title": "...", "short_code": "..." },
   "totalClicks": 1542,
   "uniqueClicks": 823,
-  "dailyStats": [{ "date": "2026-05-15", "clicks": 45, "uniqueClicks": 28 }],
-  "countryStats": [{ "country": "US", "clicks": 500 }]
+  "dailyStats": [
+    { "date": "2025-01-15", "clicks": 45, "uniqueClicks": 28 }
+  ],
+  "countryStats": [
+    { "country": "US", "clicks": 500 },
+    { "country": "GB", "clicks": 230 }
+  ]
 }`}
         />
       </ApiEndpoint>
 
-      <ApiEndpoint method="GET" path="/list-links" permission="get_stats" description="Returns up to 500 of your links, newest first." />
+      <ApiEndpoint method="GET" path="/list-links" permission="get_stats" description="Returns all your links (up to 500).">
+        <p>Response:</p>
+        <ApiCodeBlock
+          code={`{
+  "links": [
+    {
+      "id": "uuid",
+      "title": "Campaign A",
+      "short_code": "abc123",
+      "destination_url": "https://...",
+      "is_deep_link": false,
+      "created_at": "..."
+    }
+  ]
+}`}
+        />
+      </ApiEndpoint>
 
-      <ApiEndpoint method="POST" path="/delete-link" permission="create_links" description="Permanently deletes a link and its click data.">
-        <ApiCodeBlock label="Request Body" code={`{ "link_id": "lnk_..." }`} />
+      <ApiEndpoint method="POST" path="/delete-link" permission="create_links" description="Permanently deletes a link and all its click data.">
+        <p>Request Body:</p>
+        <ApiCodeBlock code={`{ "link_id": "uuid-of-link-to-delete" }`} />
       </ApiEndpoint>
 
       <h4>Error Handling</h4>
+      <p>All errors return a JSON object with an <code>error</code> field and an appropriate HTTP status code:</p>
       <ul className="api-list compact">
-        <li><strong>401</strong> - Missing or invalid API key</li>
-        <li><strong>403</strong> - Permission not enabled for this key</li>
-        <li><strong>400</strong> - Missing required fields or short code conflict</li>
-        <li><strong>404</strong> - Link not found or does not belong to you</li>
+        <li><strong>401</strong> — Missing or invalid API key</li>
+        <li><strong>403</strong> — API access revoked, account banned, or permission not enabled for this key</li>
+        <li><strong>400</strong> — Missing required fields or short code conflict</li>
+        <li><strong>404</strong> — Link not found or doesn't belong to you</li>
       </ul>
 
+      <h4>Example: cURL</h4>
       <ApiCodeBlock
-        label="Example: cURL"
         code={`curl -X POST ${apiBaseUrl}/create-link \\
   -H "Content-Type: application/json" \\
   -H "x-api-key: flk_your_key_here" \\
@@ -834,45 +863,126 @@ function ApiPrompt() {
   const prompt = `# TapSocials API Integration Guide
 
 ## Overview
-You are integrating with the TapSocials link management API. The API can create tracking links and deep links, retrieve click statistics, list links, and delete links.
+You are integrating with the TapSocials link management API. This API allows you to create tracking links (normal and deep links), retrieve click statistics, list links, and delete links.
 
 ## Authentication
-Send the API key in the x-api-key HTTP header.
+All requests require an API key passed via the \`x-api-key\` HTTP header.
 
-Base URL:
+\`\`\`
+x-api-key: flk_your_api_key_here
+\`\`\`
+
+## Base URL
+\`\`\`
 ${apiBaseUrl}
+\`\`\`
 
-Endpoints:
-- POST /create-link
-- GET /get-stats?link_id=LINK_ID
-- GET /list-links
-- POST /delete-link
+## Endpoints
 
-Create link body:
+### 1. Create a Link
+\`POST /create-link\`
+
+Creates a new tracking/redirect link.
+
+**Request Body (JSON):**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| title | string | Yes | Display name for the link |
+| destination_url | string | Yes | The URL users will be redirected to |
+| is_deep_link | boolean | No | Enable deep linking (in-app browser escape). Default: false |
+| short_code | string | No | Custom slug (3-20 chars, alphanumeric + hyphens). Auto-generated if omitted |
+
+**Example:**
+\`\`\`bash
+curl -X POST ${apiBaseUrl}/create-link \\
+  -H "Content-Type: application/json" \\
+  -H "x-api-key: flk_your_key" \\
+  -d '{"title":"Campaign A","destination_url":"https://example.com","is_deep_link":false}'
+\`\`\`
+
+**Success Response (200):**
+\`\`\`json
 {
-  "title": "Campaign A",
-  "destination_url": "https://example.com",
-  "is_deep_link": false,
-  "short_code": "optional-slug"
+  "link": {
+    "id": "uuid",
+    "title": "Campaign A",
+    "short_code": "aBcD1234",
+    "destination_url": "https://example.com",
+    "is_deep_link": false,
+    "created_at": "2025-01-01T00:00:00Z"
+  }
 }
+\`\`\`
 
-Permissions:
-- create_links: create and delete links
-- create_deep_links: create deep links with Safari/Chrome escape
-- get_stats: list links and read analytics
+### 2. Get Link Statistics
+\`GET /get-stats?link_id=UUID\`
 
-API keys start with flk_ and are shown only once.`;
+Returns click analytics for a specific link including total clicks, unique clicks, daily breakdown, and country breakdown.
+
+**Example:**
+\`\`\`bash
+curl ${apiBaseUrl}/get-stats?link_id=your-link-uuid \\
+  -H "x-api-key: flk_your_key"
+\`\`\`
+
+**Response:**
+\`\`\`json
+{
+  "link": { "id": "...", "title": "...", "short_code": "..." },
+  "totalClicks": 1542,
+  "uniqueClicks": 823,
+  "dailyStats": [{ "date": "2025-01-15", "clicks": 45, "uniqueClicks": 28 }],
+  "countryStats": [{ "country": "US", "clicks": 500 }]
+}
+\`\`\`
+
+### 3. List All Links
+\`GET /list-links\`
+
+Returns up to 500 of your links, newest first.
+
+**Example:**
+\`\`\`bash
+curl ${apiBaseUrl}/list-links -H "x-api-key: flk_your_key"
+\`\`\`
+
+### 4. Delete a Link
+\`POST /delete-link\`
+
+Permanently deletes a link and ALL its click data.
+
+**Request Body:** \`{ "link_id": "uuid" }\`
+
+## Error Codes
+
+| Status | Meaning |
+|--------|---------|
+| 401 | Missing or invalid API key |
+| 403 | Permission denied (key lacks required permission, API access revoked, or account banned) |
+| 400 | Bad request (missing fields, short code already taken) |
+| 404 | Link not found or doesn't belong to you |
+
+## Implementation Notes
+
+- API keys start with \`flk_\` and are hashed with SHA-256 server-side
+- Each key has granular permissions: create_links, create_deep_links, get_stats
+- Deep links use an in-app browser escape technique; set is_deep_link=true during creation (immutable after)
+- Short codes must be unique across all users; use auto-generation to avoid conflicts
+- The API uses the same link infrastructure as the web dashboard — links created via API appear in the dashboard and vice versa`;
 
   return (
     <section className="panel api-doc-panel" role="tabpanel" aria-label="AI Integration Prompt">
       <div className="api-doc-heading">
         <div>
           <h3>AI Integration Prompt</h3>
-          <p>Copy this prompt into Cursor, ChatGPT, Claude, or any AI tool to help it integrate with TapSocials.</p>
+          <p>Copy the prompt below and paste it into Cursor, ChatGPT, Claude, or any AI tool to help it integrate with the TapSocials API.</p>
         </div>
-        <CopyButton text={prompt} />
       </div>
-      <pre className="api-prompt">{prompt}</pre>
+      <div className="api-prompt-wrap">
+        <CopyButton text={prompt} label="Copy" />
+        <pre className="api-prompt">{prompt}</pre>
+      </div>
     </section>
   );
 }
@@ -890,19 +1000,21 @@ function ApiEndpoint({ method, path, permission, description, children }: { meth
   );
 }
 
-function ApiCodeBlock({ label, code }: { label: string; code: string }) {
+function ApiCodeBlock({ label, code }: { label?: string; code: string }) {
   return (
     <div className="api-code-block">
-      <div>
-        <span>{label}</span>
-        <CopyButton text={code} />
-      </div>
+      {label ? (
+        <div>
+          <span>{label}</span>
+          <CopyButton text={code} />
+        </div>
+      ) : null}
       <pre>{code}</pre>
     </div>
   );
 }
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, label }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -912,8 +1024,9 @@ function CopyButton({ text }: { text: string }) {
   }
 
   return (
-    <button className={`icon-button ghost ${copied ? "success" : ""}`} type="button" title="Copy" aria-label="Copy" onClick={() => void copy()}>
+    <button className={`copy-button ${label ? "with-label" : "icon-button ghost"} ${copied ? "success" : ""}`} type="button" title="Copy" aria-label="Copy" onClick={() => void copy()}>
       <Copy size={16} />
+      {label ? <span>{copied ? "Copied" : label}</span> : null}
     </button>
   );
 }
@@ -970,10 +1083,7 @@ function ApiKeyModal({ onClose, onCreate }: { onClose: () => void; onCreate: (na
     <div className="modal-backdrop" role="presentation">
       <form className="modal api-key-modal" onSubmit={(event) => void submit(event)}>
         <div className="modal-header">
-          <h2>
-            <KeyRound size={20} />
-            Create API Key
-          </h2>
+          <h2>Create API Key</h2>
           <button className="icon-button ghost" type="button" title="Close" aria-label="Close" onClick={onClose}>
             <X size={18} />
           </button>
@@ -1000,7 +1110,6 @@ function ApiKeyModal({ onClose, onCreate }: { onClose: () => void; onCreate: (na
                 <div className="setting-row" key={option.value}>
                   <div>
                     <strong>{option.label}</strong>
-                    <small>{option.detail}</small>
                   </div>
                   <button className={`switch ${permissions.includes(option.value) ? "on" : ""}`} type="button" aria-pressed={permissions.includes(option.value)} onClick={() => toggle(option.value)}>
                     <span />

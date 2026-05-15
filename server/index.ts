@@ -164,8 +164,8 @@ app.post("/api/public/create-link", async (request, response, next) => {
     let slug = "";
     if (shortCode) {
       const cleaned = cleanSlug(shortCode);
-      if (!cleaned || cleaned.length < 3) {
-        response.status(400).json({ error: "short_code must be at least 3 URL-safe characters." });
+      if (!cleaned || cleaned.length < 3 || cleaned.length > 20) {
+        response.status(400).json({ error: "short_code must be 3-20 URL-safe characters." });
         return;
       }
       slug = isDeepLink && !cleaned.startsWith("d-") ? `d-${cleaned}` : cleaned;

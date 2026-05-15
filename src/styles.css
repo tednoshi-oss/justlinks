@@ -460,40 +460,46 @@ code,
 }
 
 .api-page {
-  gap: 18px;
+  gap: 10px;
+  max-width: 704px;
 }
 
-.api-hero {
+.api-intro {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  margin: 2px 0 14px;
 }
 
-.api-hero h2,
 .api-doc-panel h3,
 .api-doc-panel h4 {
   margin: 0;
 }
 
-.api-hero p,
+.api-intro p,
 .api-doc-panel p {
-  margin: 6px 0 0;
+  margin: 0;
   color: var(--muted-foreground);
 }
 
 .api-tabs {
-  display: inline-flex;
-  width: fit-content;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
   gap: 4px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--background);
+  background: #24212e;
   padding: 4px;
 }
 
 .api-tabs button {
+  display: inline-flex;
   min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -503,13 +509,15 @@ code,
 }
 
 .api-tabs button.active {
-  background: var(--primary);
-  color: var(--primary-foreground);
+  background: #050506;
+  color: var(--foreground);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.04);
 }
 
 .api-doc-panel {
   display: grid;
-  gap: 18px;
+  gap: 16px;
+  padding: 20px;
 }
 
 .api-doc-heading {
@@ -527,15 +535,40 @@ code,
   padding-left: 18px;
 }
 
+.api-list.numbered {
+  list-style: decimal;
+}
+
 .api-list.compact {
   gap: 5px;
+}
+
+.api-base-url {
+  display: flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 10px;
+}
+
+.api-base-url code {
+  display: block;
+  overflow-x: auto;
+  max-width: calc(100% - 48px);
+  border-radius: 4px;
+  background: #24212e;
+  color: #e9e9ef;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  padding: 5px 8px;
+  white-space: nowrap;
 }
 
 .api-endpoint {
   display: grid;
   gap: 10px;
-  border-top: 1px solid var(--border);
-  padding-top: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
 }
 
 .api-endpoint-title {
@@ -558,9 +591,9 @@ code,
 .created-key-box {
   display: grid;
   gap: 8px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #0b0b0e;
+  border: 0;
+  border-radius: 2px;
+  background: #24212e;
   padding: 12px;
 }
 
@@ -590,6 +623,43 @@ code,
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.api-prompt-wrap {
+  position: relative;
+}
+
+.api-prompt {
+  max-height: 520px;
+  border-radius: 8px;
+  background: #24212e;
+  padding: 18px;
+}
+
+.copy-button.with-label {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: #050506;
+  color: var(--foreground);
+  padding: 0 12px;
+  font-weight: 700;
+}
+
+.copy-button.with-label.success,
+.copy-button.success {
+  color: var(--primary);
+}
+
+.api-prompt-wrap .copy-button.with-label {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
 }
 
 .api-key-grid {
@@ -646,6 +716,28 @@ code,
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.api-key-modal {
+  width: min(512px, 100%);
+}
+
+.api-key-modal .settings-box {
+  gap: 16px;
+  border: 0;
+  padding: 0;
+}
+
+.api-key-modal .settings-box > p {
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.api-key-modal .setting-row strong {
+  font-weight: 500;
 }
 
 .created-key-box p {
@@ -1877,7 +1969,7 @@ textarea:focus {
 
   .links-toolbar,
   .toolbar-actions,
-  .api-hero,
+  .api-intro,
   .api-doc-heading {
     align-items: stretch;
     flex-direction: column;
@@ -1885,7 +1977,7 @@ textarea:focus {
 
   .toolbar-actions,
   .api-tabs,
-  .api-hero .button,
+  .api-intro .button,
   .search-field input,
   .select,
   .select-button,
