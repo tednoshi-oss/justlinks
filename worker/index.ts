@@ -55,8 +55,7 @@ export default {
     }
 
     if (isDashboardPath(url.pathname)) {
-      if (url.pathname === "/") return Response.redirect(`${url.origin}/dashboard/links`, 302);
-      return proxyDashboard(request, env);
+      return redirectToDashboard(url, env);
     }
 
     const slug = slugFromPath(url.pathname);
@@ -188,18 +187,12 @@ async function fetchDashboardJson<T>(pathname: string, env: Env, init: RequestIn
   return response.json() as Promise<T>;
 }
 
-function proxyDashboard(request: Request, env: Env): Promise<Response> {
-  const incoming = new URL(request.url);
-  const origin = new URL(env.DASHBOARD_ORIGIN);
-  incoming.protocol = origin.protocol;
-  incoming.hostname = origin.hostname;
-  incoming.port = origin.port;
-
-  const headers = new Headers(request.headers);
-  headers.set("host", origin.host);
-  headers.set("x-forwarded-host", new URL(request.url).host);
-
-  return fetch(new Request(incoming, { method: request.method, headers, body: request.body, redirect: "manual" }));
+function redirectToDashboard(url: URL, env: Env): Response {
+  const destination = new URL(env.DASHBOARD_ORIGIN);
+  destination.pathname = url.pathname === "/" ? "/dashboard/links" : url.pathname;
+  destination.search = url.search;
+  destination.hash = url.hash;
+  return Response.redirect(destination.toString(), 302);
 }
 
 function isAuthorizedEdgeRequest(request: Request, env: Env): boolean {

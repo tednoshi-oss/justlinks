@@ -18,6 +18,9 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
     } catch {
       parsedError = undefined;
     }
+    if (message.trim().startsWith("<!DOCTYPE") || message.trim().startsWith("<html")) {
+      throw new Error("Dashboard service is temporarily unavailable. Please refresh in a moment.");
+    }
     throw new Error(parsedError || message || `Request failed: ${response.status}`);
   }
 
