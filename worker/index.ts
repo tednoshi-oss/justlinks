@@ -59,6 +59,10 @@ export default {
       return handleEdgeSyncRequest(request, env, url);
     }
 
+    if (url.pathname === "/debug/open" || url.pathname.startsWith("/debug/open/")) {
+      return handleDebugOpenRequest(url);
+    }
+
     if (isDashboardApiPath(url.pathname)) {
       return proxyDashboardApi(request, env, url);
     }
@@ -115,6 +119,138 @@ export default {
     await sendClickBatchToDashboard(batch.messages.map((message) => message.body), env);
   }
 };
+
+const debugOpenTargetSlug = "d-pctdmkl7";
+const debugOpenVariants = [
+  ["a", "ForLinks order", "x-safari first, Safari tab second"],
+  ["b", "Safari tab first", "com-apple-mobilesafari-tab first, x-safari second"],
+  ["c", "Anchor click", "programmatic anchor click to x-safari"],
+  ["d", "window.open", "window.open to x-safari"],
+  ["e", "replace", "location.replace to x-safari"],
+  ["f", "meta refresh", "meta refresh to x-safari"],
+  ["g", "302 scheme", "edge 302 redirect to x-safari"],
+  ["h", "shortcut fallback", "Shortcuts x-error then Safari"]
+] as const;
+
+function handleDebugOpenRequest(url: URL): Response {
+  const variant = url.pathname.replace(/^\/debug\/open\/?/, "").toLowerCase() || "";
+  const target = debugOpenTarget(url);
+  const safari = safariSchemeUrl(target);
+  const safariTab = `com-apple-mobilesafari-tab:${target}`;
+
+  if (!variant) {
+    return htmlResponse(renderDebugOpenIndex(url, target), 200, noCacheHeaders());
+  }
+
+  if (!debugOpenVariants.some(([id]) => id === variant)) {
+    return htmlResponse(renderDebugOpenIndex(url, target), 404, noCacheHeaders());
+  }
+
+  if (variant === "g") {
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: safari,
+        ...noCacheHeaders()
+      }
+    });
+  }
+
+  return htmlResponse(renderDebugOpenVariant(variant, target, safari, safariTab), 200, noCacheHeaders());
+}
+
+function debugOpenTarget(url: URL): string {
+  const requestedSlug = url.searchParams.get("slug") || debugOpenTargetSlug;
+  const slug = /^d-[a-zA-Z0-9_-]{3,64}$/.test(requestedSlug) ? requestedSlug : debugOpenTargetSlug;
+  const target = new URL(`/${slug}`, url.origin);
+  target.searchParams.set("escaped", "1");
+  return target.toString();
+}
+
+function safariSchemeUrl(target: string): string {
+  return `x-safari-https://${target.replace(/^https?:\/\//, "")}`;
+}
+
+function renderDebugOpenIndex(url: URL, target: string): string {
+  const links = debugOpenVariants
+    .map(([id, name, description]) => {
+      const href = new URL(`/debug/open/${id}`, url.origin);
+      href.searchParams.set("slug", new URL(target).pathname.replace("/", ""));
+      return `<a href="${escapeHtml(href.toString())}"><strong>${escapeHtml(id.toUpperCase())}. ${escapeHtml(name)}</strong><span>${escapeHtml(description)}</span></a>`;
+    })
+    .join("");
+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TapSocials Open Test</title>${debugOpenStyles()}</head><body><main><p class="eyebrow">TapSocials debug</p><h1>Open Browser Test Lab</h1><p class="copy">Send each direct test link in Reddit and tap it from your iPhone. The one that opens Safari without the popup is the method we will move into production.</p><section>${links}</section><p class="target">Target: ${escapeHtml(target)}</p></main></body></html>`;
+}
+
+function renderDebugOpenVariant(variant: string, target: string, safari: string, safariTab: string): string {
+  const jsTarget = JSON.stringify(target);
+  const jsSafari = JSON.stringify(safari);
+  const jsSafariTab = JSON.stringify(safariTab);
+  const label = debugOpenVariants.find(([id]) => id === variant)?.[1] || "Test";
+  let script = "";
+  let extraHead = "";
+
+  if (variant === "a") {
+    script = `
+      var uniqueUrl = target + (target.indexOf("?") === -1 ? "?" : "&") + "_t=" + Date.now() + Math.random().toString(36).slice(2, 6);
+      var w = uniqueUrl.replace(/^https?:\\/\\//, "");
+      window.location.href = "x-safari-https://" + w;
+      setTimeout(function () { window.location.href = "com-apple-mobilesafari-tab:" + uniqueUrl; }, 200);
+    `;
+  } else if (variant === "b") {
+    script = `
+      var uniqueUrl = target + (target.indexOf("?") === -1 ? "?" : "&") + "_t=" + Date.now() + Math.random().toString(36).slice(2, 6);
+      window.location.href = "com-apple-mobilesafari-tab:" + uniqueUrl;
+      setTimeout(function () { window.location.href = "x-safari-https://" + uniqueUrl.replace(/^https?:\\/\\//, ""); }, 200);
+    `;
+  } else if (variant === "c") {
+    script = `
+      var a = document.createElement("a");
+      a.href = safari;
+      a.target = "_self";
+      a.rel = "noreferrer";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { window.location.href = safariTab; }, 200);
+    `;
+  } else if (variant === "d") {
+    script = `
+      window.open(safari, "_self");
+      setTimeout(function () { window.open(safariTab, "_self"); }, 200);
+    `;
+  } else if (variant === "e") {
+    script = `
+      window.location.replace(safari);
+      setTimeout(function () { window.location.replace(safariTab); }, 200);
+    `;
+  } else if (variant === "f") {
+    extraHead = `<meta http-equiv="refresh" content="0;url=${escapeHtml(safari)}">`;
+    script = `
+      setTimeout(function () { window.location.href = safariTab; }, 200);
+    `;
+  } else if (variant === "h") {
+    script = `
+      var randomName = Math.random().toString(36).slice(2, 10);
+      window.location.href = "shortcuts://x-callback-url/run-shortcut?name=" + randomName + "&x-error=" + encodeURIComponent(target);
+      setTimeout(function () { window.location.href = safari; }, 150);
+      setTimeout(function () { window.location.href = safariTab; }, 300);
+    `;
+  }
+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${extraHead}<title>${escapeHtml(label)}</title>${debugOpenStyles()}</head><body><main><p class="eyebrow">Test ${escapeHtml(variant.toUpperCase())}</p><h1>${escapeHtml(label)}</h1><p class="copy">Trying to open Safari now. If Reddit shows no popup for this one, tell me the letter.</p><a class="button" href="${escapeHtml(safari)}">Open manually</a></main><script>
+    (function () {
+      var target = ${jsTarget};
+      var safari = ${jsSafari};
+      var safariTab = ${jsSafariTab};
+      ${script}
+    })();
+  </script></body></html>`;
+}
+
+function debugOpenStyles(): string {
+  return `<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fff;color:#111;font-family:-apple-system,BlinkMacSystemFont,Inter,ui-sans-serif,system-ui,sans-serif}main{width:min(520px,calc(100vw - 32px));padding:28px}h1{margin:0 0 12px;font-size:28px;letter-spacing:0}.eyebrow{margin:0 0 8px;color:#0891b2;font-weight:800;text-transform:uppercase;font-size:12px;letter-spacing:.08em}.copy{margin:0 0 22px;color:#555;line-height:1.45}section{display:grid;gap:10px}a{display:flex;flex-direction:column;gap:4px;border:1px solid #ddd;border-radius:12px;padding:14px 16px;color:#111;text-decoration:none;background:#fafafa}.button{display:inline-flex;min-height:44px;align-items:center;justify-content:center;border-color:#111;background:#111;color:#fff;font-weight:800}span{color:#666;font-size:14px}.target{margin-top:20px;color:#777;font-size:12px;word-break:break-all}</style>`;
+}
 
 async function handleEdgeSyncRequest(request: Request, env: Env, url: URL): Promise<Response> {
   if (!isAuthorizedEdgeRequest(request, env)) return jsonResponse({ error: "Unauthorized edge request." }, 401);
