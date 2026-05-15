@@ -2,11 +2,13 @@ import {
   Activity,
   BarChart3,
   ChevronDown,
+  Code2,
   Copy,
   Download,
   Edit3,
   Filter,
   Info,
+  KeyRound,
   LayoutDashboard,
   Link2,
   LogOut,
@@ -25,10 +27,11 @@ import {
 } from "lucide-react";
 import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
-import type { AnalyticsPayload, AuthUser, BreakdownPoint, ClickEvent, DashboardSummary, LinkGroup, LinkWithStats, SmartLink } from "../shared/types";
+import type { AnalyticsPayload, ApiKeyPermission, ApiKeySummary, AuthUser, BreakdownPoint, ClickEvent, CreatedApiKey, DashboardSummary, LinkGroup, LinkWithStats, SmartLink } from "../shared/types";
 
-type View = "dashboard" | "links" | "analytics";
+type View = "dashboard" | "links" | "analytics" | "api";
 type SortMode = "newest" | "oldest" | "most-clicks" | "least-clicks" | "name-asc" | "name-desc";
+type ApiDocsTab = "manual" | "prompt";
 
 const blankAnalytics: AnalyticsPayload = {
   clicksOverTime: [],
@@ -58,6 +61,7 @@ export function App() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [links, setLinks] = useState<LinkWithStats[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsPayload>(blankAnalytics);
+  const [apiKeys, setApiKeys] = useState<ApiKeySummary[]>([]);
   const [days, setDays] = useState(30);
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("newest");
@@ -99,6 +103,11 @@ export function App() {
     void refresh(days);
   }, [days, authUser]);
 
+  useEffect(() => {
+    if (!authUser || view !== "api") return;
+    void refreshApiKeys();
+  }, [authUser, view]);
+
   async function refresh(nextDays = days) {
     try {
       setLoading(true);
@@ -125,6 +134,14 @@ export function App() {
     }
   }
 
+  async function refreshApiKeys() {
+    try {
+      setApiKeys(await api.apiKeys());
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to load API keys.");
+    }
+  }
+
   async function handleAuth(user: AuthUser) {
     setAuthUser(user);
     setError(null);
@@ -137,6 +154,19 @@ export function App() {
     setSummary(null);
     setLinks([]);
     setAnalytics(blankAnalytics);
+    setApiKeys([]);
+  }
+
+  async function saveApiKey(name: string, permissions: ApiKeyPermission[]): Promise<CreatedApiKey> {
+    const created = await api.createApiKey({ name, permissions });
+    setApiKeys((current) => [created.key, ...current]);
+    return created;
+  }
+
+  async function removeApiKey(key: ApiKeySummary) {
+    if (!window.confirm(`Delete "${key.name}" API key? This cannot be undone.`)) return;
+    await api.deleteApiKey(key.id);
+    setApiKeys((current) => current.filter((item) => item.id !== key.id));
   }
 
   function navigate(nextView: View) {
@@ -273,6 +303,7 @@ export function App() {
               />
             ) : null}
             {view === "analytics" ? <AnalyticsView analytics={analytics} days={days} onDaysChange={setDays} /> : null}
+            {view === "api" ? <ApiView keys={apiKeys} onCreateKey={saveApiKey} onDeleteKey={(key) => void removeApiKey(key)} /> : null}
           </>
         ) : null}
       </main>
@@ -418,6 +449,7 @@ function NavList({ active, onNavigate }: { active: View; onNavigate: (view: View
       <NavButton active={active === "dashboard"} icon={<LayoutDashboard size={18} />} label="Dashboard" onClick={() => onNavigate("dashboard")} />
       <NavButton active={active === "links"} icon={<Link2 size={18} />} label="Links" onClick={() => onNavigate("links")} />
       <NavButton active={active === "analytics"} icon={<BarChart3 size={18} />} label="Analytics" onClick={() => onNavigate("analytics")} />
+      <NavButton active={active === "api"} icon={<Code2 size={18} />} label="API" onClick={() => onNavigate("api")} />
     </nav>
   );
 }
@@ -660,6 +692,339 @@ function AnalyticsView({ analytics, days, onDaysChange }: { analytics: Analytics
         <DailyBreakdownTable rows={analytics.dailyBreakdown} />
       </Panel>
     </section>
+  );
+}
+
+const apiBaseUrl = `${shortLinkOrigin}/api/public`;
+const apiPermissionOptions: { value: ApiKeyPermission; label: string; detail: string }[] = [
+  { value: "create_links", label: "Create Links", detail: "Create and delete normal tracking links." },
+  { value: "create_deep_links", label: "Create Deep Links", detail: "Allow API-created links to use Safari/Chrome escape." },
+  { value: "get_stats", label: "Get Click Stats", detail: "List links and read click statistics." }
+];
+
+function ApiView({
+  keys,
+  onCreateKey,
+  onDeleteKey
+}: {
+  keys: ApiKeySummary[];
+  onCreateKey: (name: string, permissions: ApiKeyPermission[]) => Promise<CreatedApiKey>;
+  onDeleteKey: (key: ApiKeySummary) => void;
+}) {
+  const [tab, setTab] = useState<ApiDocsTab>("manual");
+  const [modalOpen, setModalOpen] = useState(false);
+
+  return (
+    <section className="page-content api-page">
+      <section className="panel api-hero">
+        <div>
+          <h2>API Keys</h2>
+          <p>Use API keys to programmatically create links and fetch statistics.</p>
+        </div>
+        <button className="button primary" type="button" onClick={() => setModalOpen(true)}>
+          <Plus size={16} />
+          New Key
+        </button>
+      </section>
+
+      <div className="api-tabs" role="tablist" aria-label="API documentation">
+        <button type="button" role="tab" aria-selected={tab === "manual"} className={tab === "manual" ? "active" : ""} onClick={() => setTab("manual")}>
+          User Manual
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "prompt"} className={tab === "prompt" ? "active" : ""} onClick={() => setTab("prompt")}>
+          AI Integration Prompt
+        </button>
+      </div>
+
+      {tab === "manual" ? <ApiManual /> : <ApiPrompt />}
+
+      <section className="api-key-grid" aria-label="API keys">
+        {keys.length ? (
+          keys.map((key) => <ApiKeyCard key={key.id} apiKey={key} onDelete={() => onDeleteKey(key)} />)
+        ) : (
+          <div className="empty-message table-empty">No API keys yet.</div>
+        )}
+      </section>
+
+      {modalOpen ? <ApiKeyModal onClose={() => setModalOpen(false)} onCreate={onCreateKey} /> : null}
+    </section>
+  );
+}
+
+function ApiManual() {
+  return (
+    <section className="panel api-doc-panel" role="tabpanel" aria-label="User Manual">
+      <h3>TapSocials API - User Manual</h3>
+      <p>The TapSocials API lets you programmatically create tracking links, retrieve click statistics, list your links, and delete links. All requests use API keys.</p>
+
+      <h4>Getting Started</h4>
+      <ul className="api-list">
+        <li>Click <strong>New Key</strong> above to create an API key.</li>
+        <li>Choose which permissions the key should have: Create Links, Deep Links, and Stats.</li>
+        <li><strong>Copy the key immediately.</strong> It is shown only once and cannot be retrieved later.</li>
+        <li>Include the key in every request using the <code>x-api-key</code> header.</li>
+      </ul>
+
+      <ApiCodeBlock label="Base URL" code={apiBaseUrl} />
+
+      <ApiEndpoint method="POST" path="/create-link" permission="create_links" description="Creates a new tracking link. Deep links also require create_deep_links.">
+        <ApiCodeBlock
+          label="Request Body"
+          code={`{
+  "title": "My Campaign",
+  "destination_url": "https://example.com",
+  "is_deep_link": false,
+  "short_code": "my-slug"
+}`}
+        />
+        <ApiCodeBlock
+          label="Response"
+          code={`{
+  "link": {
+    "id": "lnk_...",
+    "title": "My Campaign",
+    "short_code": "my-slug",
+    "destination_url": "https://example.com",
+    "is_deep_link": false,
+    "created_at": "2026-01-01T00:00:00.000Z"
+  }
+}`}
+        />
+      </ApiEndpoint>
+
+      <ApiEndpoint method="GET" path="/get-stats?link_id=LINK_ID" permission="get_stats" description="Returns click analytics for one link.">
+        <ApiCodeBlock
+          label="Response"
+          code={`{
+  "link": { "id": "...", "title": "...", "short_code": "..." },
+  "totalClicks": 1542,
+  "uniqueClicks": 823,
+  "dailyStats": [{ "date": "2026-05-15", "clicks": 45, "uniqueClicks": 28 }],
+  "countryStats": [{ "country": "US", "clicks": 500 }]
+}`}
+        />
+      </ApiEndpoint>
+
+      <ApiEndpoint method="GET" path="/list-links" permission="get_stats" description="Returns up to 500 of your links, newest first." />
+
+      <ApiEndpoint method="POST" path="/delete-link" permission="create_links" description="Permanently deletes a link and its click data.">
+        <ApiCodeBlock label="Request Body" code={`{ "link_id": "lnk_..." }`} />
+      </ApiEndpoint>
+
+      <h4>Error Handling</h4>
+      <ul className="api-list compact">
+        <li><strong>401</strong> - Missing or invalid API key</li>
+        <li><strong>403</strong> - Permission not enabled for this key</li>
+        <li><strong>400</strong> - Missing required fields or short code conflict</li>
+        <li><strong>404</strong> - Link not found or does not belong to you</li>
+      </ul>
+
+      <ApiCodeBlock
+        label="Example: cURL"
+        code={`curl -X POST ${apiBaseUrl}/create-link \\
+  -H "Content-Type: application/json" \\
+  -H "x-api-key: flk_your_key_here" \\
+  -d '{"title":"My Link","destination_url":"https://example.com"}'`}
+      />
+    </section>
+  );
+}
+
+function ApiPrompt() {
+  const prompt = `# TapSocials API Integration Guide
+
+## Overview
+You are integrating with the TapSocials link management API. The API can create tracking links and deep links, retrieve click statistics, list links, and delete links.
+
+## Authentication
+Send the API key in the x-api-key HTTP header.
+
+Base URL:
+${apiBaseUrl}
+
+Endpoints:
+- POST /create-link
+- GET /get-stats?link_id=LINK_ID
+- GET /list-links
+- POST /delete-link
+
+Create link body:
+{
+  "title": "Campaign A",
+  "destination_url": "https://example.com",
+  "is_deep_link": false,
+  "short_code": "optional-slug"
+}
+
+Permissions:
+- create_links: create and delete links
+- create_deep_links: create deep links with Safari/Chrome escape
+- get_stats: list links and read analytics
+
+API keys start with flk_ and are shown only once.`;
+
+  return (
+    <section className="panel api-doc-panel" role="tabpanel" aria-label="AI Integration Prompt">
+      <div className="api-doc-heading">
+        <div>
+          <h3>AI Integration Prompt</h3>
+          <p>Copy this prompt into Cursor, ChatGPT, Claude, or any AI tool to help it integrate with TapSocials.</p>
+        </div>
+        <CopyButton text={prompt} />
+      </div>
+      <pre className="api-prompt">{prompt}</pre>
+    </section>
+  );
+}
+
+function ApiEndpoint({ method, path, permission, description, children }: { method: string; path: string; permission: ApiKeyPermission; description: string; children?: ReactNode }) {
+  return (
+    <section className="api-endpoint">
+      <div className="api-endpoint-title">
+        <span>{method}</span>
+        <code>{path}</code>
+      </div>
+      <p>{description} Requires <strong>{permission}</strong>.</p>
+      {children}
+    </section>
+  );
+}
+
+function ApiCodeBlock({ label, code }: { label: string; code: string }) {
+  return (
+    <div className="api-code-block">
+      <div>
+        <span>{label}</span>
+        <CopyButton text={code} />
+      </div>
+      <pre>{code}</pre>
+    </div>
+  );
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    const ok = await copyTextToClipboard(text);
+    setCopied(ok);
+    window.setTimeout(() => setCopied(false), 1200);
+  }
+
+  return (
+    <button className={`icon-button ghost ${copied ? "success" : ""}`} type="button" title="Copy" aria-label="Copy" onClick={() => void copy()}>
+      <Copy size={16} />
+    </button>
+  );
+}
+
+function ApiKeyCard({ apiKey, onDelete }: { apiKey: ApiKeySummary; onDelete: () => void }) {
+  return (
+    <article className="api-key-card">
+      <div>
+        <strong>{apiKey.name}</strong>
+        <code>{apiKey.prefix}</code>
+      </div>
+      <div className="api-permissions">
+        {apiKey.permissions.includes("create_links") ? <span>Links</span> : null}
+        {apiKey.permissions.includes("create_deep_links") ? <span>Deep Links</span> : null}
+        {apiKey.permissions.includes("get_stats") ? <span>Stats</span> : null}
+      </div>
+      <div className="api-key-meta">
+        <span>Created {timeAgo(apiKey.createdAt)}</span>
+        <span>{apiKey.lastUsedAt ? `Used ${timeAgo(apiKey.lastUsedAt)}` : "Never used"}</span>
+      </div>
+      <button className="icon-button ghost danger" type="button" title="Delete API key" aria-label={`Delete ${apiKey.name}`} onClick={onDelete}>
+        <Trash2 size={16} />
+      </button>
+    </article>
+  );
+}
+
+function ApiKeyModal({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string, permissions: ApiKeyPermission[]) => Promise<CreatedApiKey> }) {
+  const [name, setName] = useState("");
+  const [permissions, setPermissions] = useState<ApiKeyPermission[]>(["create_links", "create_deep_links", "get_stats"]);
+  const [created, setCreated] = useState<CreatedApiKey | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function toggle(permission: ApiKeyPermission) {
+    setPermissions((current) => (current.includes(permission) ? current.filter((item) => item !== permission) : [...current, permission]));
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (created) return;
+    setSaving(true);
+    setError(null);
+    try {
+      setCreated(await onCreate(name, permissions));
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to create API key.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form className="modal api-key-modal" onSubmit={(event) => void submit(event)}>
+        <div className="modal-header">
+          <h2>
+            <KeyRound size={20} />
+            Create API Key
+          </h2>
+          <button className="icon-button ghost" type="button" title="Close" aria-label="Close" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+
+        {created ? (
+          <div className="created-key-box">
+            <p>Copy this API key now. It will not be shown again.</p>
+            <div>
+              <code>{created.secret}</code>
+              <CopyButton text={created.secret} />
+            </div>
+          </div>
+        ) : (
+          <>
+            <label className="field">
+              <span>Key Name</span>
+              <input required value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Production Bot" />
+            </label>
+
+            <div className="settings-box">
+              <p>Permissions</p>
+              {apiPermissionOptions.map((option) => (
+                <div className="setting-row" key={option.value}>
+                  <div>
+                    <strong>{option.label}</strong>
+                    <small>{option.detail}</small>
+                  </div>
+                  <button className={`switch ${permissions.includes(option.value) ? "on" : ""}`} type="button" aria-pressed={permissions.includes(option.value)} onClick={() => toggle(option.value)}>
+                    <span />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {error ? <div className="notice error modal-error">{error}</div> : null}
+
+        <div className="modal-actions">
+          <button className="button outline" type="button" onClick={onClose}>
+            {created ? "Done" : "Cancel"}
+          </button>
+          {!created ? (
+            <button className="button primary" type="submit" disabled={saving || !name.trim() || !permissions.length}>
+              {saving ? "Creating..." : "Create Key"}
+            </button>
+          ) : null}
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -1356,18 +1721,21 @@ function slugify(value: string): string {
 }
 
 function currentView(): View {
+  if (window.location.pathname.includes("/api")) return "api";
   if (window.location.pathname.includes("/analytics")) return "analytics";
   if (window.location.pathname.includes("/links")) return "links";
   return "dashboard";
 }
 
 function viewTitle(view: View): string {
+  if (view === "api") return "API Keys";
   if (view === "links") return "Links";
   if (view === "analytics") return "Analytics";
   return "Dashboard";
 }
 
 function viewSubtitle(view: View): string {
+  if (view === "api") return "Manage your API access";
   if (view === "links") return "Manage your tracking links";
   if (view === "analytics") return "Detailed performance metrics";
   return "Overview of your link performance";

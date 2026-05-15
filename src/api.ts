@@ -1,4 +1,4 @@
-import type { AnalyticsPayload, AuthUser, DashboardSummary, LinkGroup, LinkWithStats, SmartLink } from "../shared/types";
+import type { AnalyticsPayload, ApiKeyPermission, ApiKeySummary, AuthUser, CreatedApiKey, DashboardSummary, LinkGroup, LinkWithStats, SmartLink } from "../shared/types";
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -55,6 +55,18 @@ export const api = {
   },
   summary: () => requestJson<DashboardSummary>("/api/summary"),
   analytics: (days = 30) => requestJson<AnalyticsPayload>(`/api/analytics?days=${days}`),
+  apiKeys: () => requestJson<ApiKeySummary[]>("/api/api-keys"),
+  createApiKey: (payload: { name: string; permissions: ApiKeyPermission[] }) =>
+    requestJson<CreatedApiKey>("/api/api-keys", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  deleteApiKey: async (id: string) => {
+    const response = await fetch(`/api/api-keys/${id}`, { method: "DELETE", credentials: "include" });
+    if (!response.ok && response.status !== 404) {
+      throw new Error(`Delete failed: ${response.status}`);
+    }
+  },
   links: () => requestJson<LinkWithStats[]>("/api/links"),
   groups: () => requestJson<LinkGroup[]>("/api/groups"),
   createGroup: (payload: Partial<LinkGroup>) =>

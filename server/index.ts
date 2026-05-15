@@ -6,29 +6,35 @@ import type { Request } from "express";
 import {
   addClickEvent,
   addClickEvents,
+  authenticateApiKey,
   authenticateUser,
+  createApiKey,
   createGroup,
   createLink,
   createSession,
   createUserAccount,
+  deleteApiKey,
   deleteGroup,
   deleteLink,
   deleteSession,
   findLinkById,
   findLinkBySlug,
   getAnalytics,
+  getPublicLinkStats,
   getSummary,
   getUserBySession,
+  listApiKeys,
   listGroups,
   listLinks,
+  listPublicApiLinks,
   listRawLinks,
   updateGroup,
   updateLink
 } from "./storage.js";
 import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
-import { classifyReferrer, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
+import { classifyReferrer, cleanSlug, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
 import { deepLinkEscapeUrl, isEscapedBrowserRequest, isHttpUrl, isLinkPreviewBot, isMobileDevice, parseHtmlMetadata, previewFetchUrl, renderDeepLinkEscapePage, renderLinkPreviewPage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
-import type { AuthUser, ClickEvent, SmartLink } from "../shared/types.js";
+import type { ApiKeyPermission, AuthUser, ClickEvent, SmartLink } from "../shared/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -132,7 +138,147 @@ app.post("/api/edge/clicks/batch", async (request, response, next) => {
   }
 });
 
+app.post("/api/public/create-link", async (request, response, next) => {
+  try {
+    const context = await requireApiPermission(request, response, "create_links");
+    if (!context) return;
+
+    const title = String(request.body?.title || "").trim();
+    const destination = String(request.body?.destination_url || "").trim();
+    const isDeepLink = Boolean(request.body?.is_deep_link);
+    const shortCode = typeof request.body?.short_code === "string" ? request.body.short_code.trim() : "";
+
+    if (!title || !destination) {
+      response.status(400).json({ error: "title and destination_url are required." });
+      return;
+    }
+    if (!isHttpUrl(destination)) {
+      response.status(400).json({ error: "destination_url must be a valid http or https URL." });
+      return;
+    }
+    if (isDeepLink && !hasApiPermission(context.permissions, "create_deep_links")) {
+      response.status(403).json({ error: "This API key cannot create deep links." });
+      return;
+    }
+
+    let slug = "";
+    if (shortCode) {
+      const cleaned = cleanSlug(shortCode);
+      if (!cleaned || cleaned.length < 3) {
+        response.status(400).json({ error: "short_code must be at least 3 URL-safe characters." });
+        return;
+      }
+      slug = isDeepLink && !cleaned.startsWith("d-") ? `d-${cleaned}` : cleaned;
+      if (await findLinkBySlug(slug)) {
+        response.status(400).json({ error: "short_code already exists." });
+        return;
+      }
+    }
+
+    const link = await createLink(
+      {
+        name: title,
+        slug: slug || undefined,
+        fallbackUrl: destination,
+        webUrl: destination,
+        iosUrl: "",
+        androidUrl: "",
+        description: "",
+        notes: "",
+        tags: [],
+        isDeepLink,
+        forceExternalBrowser: isDeepLink
+      },
+      context.userId
+    );
+    await syncLinkToEdge(link).catch((error) => console.error("Failed to sync API link to edge", error));
+    response.json({ link: publicApiLink(link) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/public/list-links", async (request, response, next) => {
+  try {
+    const context = await requireApiPermission(request, response, "get_stats");
+    if (!context) return;
+    response.json({ links: await listPublicApiLinks(context.userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/public/get-stats", async (request, response, next) => {
+  try {
+    const context = await requireApiPermission(request, response, "get_stats");
+    if (!context) return;
+    const linkId = String(request.query.link_id || "");
+    if (!linkId) {
+      response.status(400).json({ error: "link_id is required." });
+      return;
+    }
+    const stats = await getPublicLinkStats(linkId, context.userId);
+    if (!stats) {
+      response.status(404).json({ error: "Link not found." });
+      return;
+    }
+    response.json(stats);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/public/delete-link", async (request, response, next) => {
+  try {
+    const context = await requireApiPermission(request, response, "create_links");
+    if (!context) return;
+    const linkId = String(request.body?.link_id || "").trim();
+    if (!linkId) {
+      response.status(400).json({ error: "link_id is required." });
+      return;
+    }
+    const link = await findLinkById(linkId, context.userId);
+    if (!link) {
+      response.status(404).json({ error: "Link not found." });
+      return;
+    }
+    const deleted = await deleteLink(linkId, context.userId);
+    if (deleted) {
+      await deleteLinkFromEdge(link.slug).catch((error) => console.error("Failed to delete API link from edge", error));
+      await syncLinksToEdge(await listRawLinks()).catch((error) => console.error("Failed to reconcile edge links", error));
+    }
+    response.json({ deleted });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use("/api", requireAuth);
+
+app.get("/api/api-keys", async (_request, response, next) => {
+  try {
+    response.json(await listApiKeys(currentUser(response).id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/api-keys", async (request, response, next) => {
+  try {
+    response.status(201).json(await createApiKey(request.body || {}, currentUser(response).id));
+  } catch (error) {
+    response.status(400).json({ error: error instanceof Error ? error.message : "Unable to create API key." });
+  }
+});
+
+app.delete("/api/api-keys/:id", async (request, response, next) => {
+  try {
+    const deleted = await deleteApiKey(request.params.id, currentUser(response).id);
+    response.status(deleted ? 204 : 404).end();
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.get("/api/links", async (_request, response, next) => {
   try {
@@ -426,6 +572,34 @@ function clientIp(request: Request): string {
   const forwardedFor = request.get("x-forwarded-for");
   if (forwardedFor) return forwardedFor.split(",")[0].trim();
   return request.ip || "local";
+}
+
+async function requireApiPermission(request: Request, response: express.Response, permission: ApiKeyPermission) {
+  const context = await authenticateApiKey(request.get("x-api-key"));
+  if (!context) {
+    response.status(401).json({ error: "Missing or invalid API key." });
+    return null;
+  }
+  if (!hasApiPermission(context.permissions, permission)) {
+    response.status(403).json({ error: "Permission denied for this API key." });
+    return null;
+  }
+  return context;
+}
+
+function hasApiPermission(permissions: ApiKeyPermission[], permission: ApiKeyPermission): boolean {
+  return permissions.includes(permission);
+}
+
+function publicApiLink(link: SmartLink) {
+  return {
+    id: link.id,
+    title: link.name,
+    short_code: link.slug,
+    destination_url: link.fallbackUrl || link.webUrl,
+    is_deep_link: Boolean(link.isDeepLink || link.forceExternalBrowser || link.slug.startsWith("d-")),
+    created_at: link.createdAt
+  };
 }
 
 async function requireAuth(request: express.Request, response: express.Response, next: express.NextFunction) {

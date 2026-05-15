@@ -1,5 +1,6 @@
 export type DeviceType = "iOS" | "Android" | "Desktop" | "Other";
 export type LinkStatus = "active" | "paused";
+export type ApiKeyPermission = "create_links" | "create_deep_links" | "get_stats";
 
 export interface SmartLink {
   id: string;
@@ -92,4 +93,18 @@ export interface AuthUser {
   email: string;
   name: string;
   createdAt: string;
+}
+
+export interface ApiKeySummary {
+  id: string;
+  name: string;
+  prefix: string;
+  permissions: ApiKeyPermission[];
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface CreatedApiKey {
+  key: ApiKeySummary;
+  secret: string;
 }

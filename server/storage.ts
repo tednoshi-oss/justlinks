@@ -3,6 +3,9 @@ import crypto from "node:crypto";
 import path from "node:path";
 import type {
   AnalyticsPayload,
+  ApiKeyPermission,
+  ApiKeySummary,
+  CreatedApiKey,
   AuthUser,
   ClickEvent,
   DashboardSummary,
@@ -25,12 +28,46 @@ interface AuthSession {
   expiresAt: string;
 }
 
+interface StoredApiKey extends ApiKeySummary {
+  userId: string;
+  keyHash: string;
+}
+
+export interface ApiKeyAuthContext {
+  userId: string;
+  keyId: string;
+  permissions: ApiKeyPermission[];
+}
+
+export interface PublicLinkStats {
+  link: {
+    id: string;
+    title: string;
+    short_code: string;
+    destination_url: string;
+    is_deep_link: boolean;
+    created_at: string;
+  };
+  totalClicks: number;
+  uniqueClicks: number;
+  dailyStats: {
+    date: string;
+    clicks: number;
+    uniqueClicks: number;
+  }[];
+  countryStats: {
+    country: string;
+    clicks: number;
+  }[];
+}
+
 interface StoreShape {
   links: SmartLink[];
   groups: LinkGroup[];
   events: ClickEvent[];
   users: StoredUser[];
   sessions: AuthSession[];
+  apiKeys: StoredApiKey[];
 }
 
 const dataDir = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), "data"));
@@ -133,7 +170,8 @@ export async function getStore(): Promise<StoreShape> {
       groups: parsed.groups || seedGroups,
       events: parsed.events || [],
       users: parsed.users || [],
-      sessions: pruneExpiredSessions(parsed.sessions || [])
+      sessions: pruneExpiredSessions(parsed.sessions || []),
+      apiKeys: (parsed as Partial<StoreShape>).apiKeys || []
     };
     migrateOwnedData(cachedStore);
   } catch {
@@ -142,12 +180,108 @@ export async function getStore(): Promise<StoreShape> {
       groups: seedGroups,
       events: buildSeedEvents(seedLinks),
       users: [],
-      sessions: []
+      sessions: [],
+      apiKeys: []
     };
     await persistStore(cachedStore);
   }
 
   return cachedStore;
+}
+
+export async function listApiKeys(userId: string): Promise<ApiKeySummary[]> {
+  const store = await getStore();
+  return store.apiKeys.filter((key) => key.userId === userId).map(publicApiKey);
+}
+
+export async function createApiKey(input: { name?: string; permissions?: ApiKeyPermission[] }, userId: string): Promise<CreatedApiKey> {
+  const store = await getStore();
+  const name = String(input.name || "").trim();
+  if (!name) throw new Error("Key name is required.");
+
+  const permissions = normalizeApiKeyPermissions(input.permissions);
+  if (!permissions.length) throw new Error("Select at least one permission.");
+
+  const secret = `flk_${crypto.randomBytes(24).toString("hex")}`;
+  const now = new Date().toISOString();
+  const key: StoredApiKey = {
+    id: `key_${cryptoRandom()}`,
+    userId,
+    name,
+    prefix: `${secret.slice(0, 12)}...`,
+    permissions,
+    createdAt: now,
+    lastUsedAt: null,
+    keyHash: hashApiKey(secret)
+  };
+
+  store.apiKeys.unshift(key);
+  await persistStore(store);
+  return { key: publicApiKey(key), secret };
+}
+
+export async function deleteApiKey(id: string, userId: string): Promise<boolean> {
+  const store = await getStore();
+  const previousLength = store.apiKeys.length;
+  store.apiKeys = store.apiKeys.filter((key) => key.id !== id || key.userId !== userId);
+  if (store.apiKeys.length === previousLength) return false;
+  await persistStore(store);
+  return true;
+}
+
+export async function authenticateApiKey(secret: string | undefined): Promise<ApiKeyAuthContext | null> {
+  if (!secret?.startsWith("flk_")) return null;
+  const store = await getStore();
+  const keyHash = hashApiKey(secret);
+  const key = store.apiKeys.find((candidate) => safeCompare(candidate.keyHash, keyHash));
+  if (!key) return null;
+  key.lastUsedAt = new Date().toISOString();
+  schedulePersist(store);
+  return {
+    userId: key.userId,
+    keyId: key.id,
+    permissions: key.permissions
+  };
+}
+
+export async function listPublicApiLinks(userId: string) {
+  const store = await getStore();
+  return linksForUser(store, userId)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 500)
+    .map(publicApiLink);
+}
+
+export async function getPublicLinkStats(linkId: string, userId: string): Promise<PublicLinkStats | null> {
+  const store = await getStore();
+  const link = store.links.find((candidate) => candidate.id === linkId && candidate.userId === userId);
+  if (!link) return null;
+
+  const events = eventsForLinks(store, [link], userId).filter((event) => event.linkId === link.id || event.slug === link.slug);
+  const daily = new Map<string, ClickEvent[]>();
+  const countries = new Map<string, number>();
+
+  for (const event of events) {
+    const day = event.occurredAt.slice(0, 10);
+    daily.set(day, [...(daily.get(day) || []), event]);
+    countries.set(event.country || "Unknown", (countries.get(event.country || "Unknown") || 0) + 1);
+  }
+
+  return {
+    link: publicApiLink(link),
+    totalClicks: events.length,
+    uniqueClicks: new Set(events.map((event) => event.visitorKey)).size,
+    dailyStats: Array.from(daily.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, entries]) => ({
+        date,
+        clicks: entries.length,
+        uniqueClicks: new Set(entries.map((event) => event.visitorKey)).size
+      })),
+    countryStats: Array.from(countries.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([country, clicks]) => ({ country, clicks }))
+  };
 }
 
 export async function listGroups(userId: string): Promise<LinkGroup[]> {
@@ -517,6 +651,34 @@ function publicUser(user: StoredUser): AuthUser {
   };
 }
 
+function publicApiKey(key: StoredApiKey): ApiKeySummary {
+  return {
+    id: key.id,
+    name: key.name,
+    prefix: key.prefix,
+    permissions: key.permissions,
+    createdAt: key.createdAt,
+    lastUsedAt: key.lastUsedAt
+  };
+}
+
+function publicApiLink(link: SmartLink) {
+  return {
+    id: link.id,
+    title: link.name,
+    short_code: link.slug,
+    destination_url: link.fallbackUrl || link.webUrl,
+    is_deep_link: Boolean(link.isDeepLink || link.forceExternalBrowser || link.slug.startsWith("d-")),
+    created_at: link.createdAt
+  };
+}
+
+function normalizeApiKeyPermissions(value: unknown): ApiKeyPermission[] {
+  const allowed = new Set<ApiKeyPermission>(["create_links", "create_deep_links", "get_stats"]);
+  const source = Array.isArray(value) ? value : ["create_links", "create_deep_links", "get_stats"];
+  return Array.from(new Set(source.filter((permission): permission is ApiKeyPermission => allowed.has(permission as ApiKeyPermission))));
+}
+
 function normalizeEmail(value: string | undefined): string {
   return String(value || "").trim().toLowerCase();
 }
@@ -537,6 +699,16 @@ function verifyPassword(password: string, storedHash: string): boolean {
 
 function hashSessionId(sessionId: string): string {
   return crypto.createHash("sha256").update(sessionId).digest("base64url");
+}
+
+function hashApiKey(secret: string): string {
+  return crypto.createHash("sha256").update(secret).digest("base64url");
+}
+
+function safeCompare(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function pruneExpiredSessions(sessions: AuthSession[]): AuthSession[] {
