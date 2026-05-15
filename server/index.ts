@@ -325,7 +325,18 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
 
 app.listen(port, "0.0.0.0", () => {
   console.log(`TapSocials running at http://localhost:${port}`);
+  void warmEdgeCache();
 });
+
+async function warmEdgeCache(): Promise<void> {
+  if (!isEdgeSyncConfigured()) return;
+  try {
+    const result = await syncLinksToEdge(await listRawLinks());
+    console.log(`Synced ${result.synced} links to Cloudflare edge.`);
+  } catch (error) {
+    console.error("Failed to sync links to edge on startup", error);
+  }
+}
 
 function clientIp(request: Request): string {
   const forwardedFor = request.get("x-forwarded-for");
