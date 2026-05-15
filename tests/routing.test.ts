@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SmartLink } from "../shared/types.js";
-import { androidExternalBrowserIntent, deepLinkEscapeUrl, externalBrowserEscapeAttemptUrl, isEscapedBrowserRequest, isInAppBrowser, shouldUseBrowserEscape } from "../shared/edge.js";
+import { androidExternalBrowserIntent, deepLinkEscapeUrl, externalBrowserEscapeAttemptUrl, isEscapedBrowserRequest, isInAppBrowser, renderDeepLinkEscapePage, shouldUseBrowserEscape } from "../shared/edge.js";
 import { cleanSlug, detectDevice, selectDestination } from "../server/routing.js";
 
 const link: SmartLink = {
@@ -60,4 +60,12 @@ test("deep link browser escape targets the same short link before final redirect
     "intent://tapsocials.com/d-test?utm=one&escaped=1#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=https%3A%2F%2Ftapsocials.com%2Fd-test%3Futm%3Done%26escaped%3D1;end"
   );
   assert.equal(externalBrowserEscapeAttemptUrl(escaped, "iOS"), "x-safari-https://tapsocials.com/d-test?utm=one&escaped=1");
+});
+
+test("iOS deep link escape page uses fast Safari trampoline with fallback", () => {
+  const html = renderDeepLinkEscapePage("https://tapsocials.com/d-test?escaped=1", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Reddit/2026");
+  assert.match(html, /document\.write\(freshHtml\)/);
+  assert.match(html, /x-safari-https/);
+  assert.match(html, /com-apple-mobilesafari-tab/);
+  assert.match(html, /shortcuts:\/\/x-callback-url\/run-shortcut/);
 });
