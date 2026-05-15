@@ -124,7 +124,7 @@ const debugOpenTargetSlug = "d-pctdmkl7";
 const debugOpenVariants = [
   ["a", "ForLinks order", "x-safari first, Safari tab second"],
   ["b", "Safari tab first", "com-apple-mobilesafari-tab first, x-safari second"],
-  ["c", "Anchor click", "iOS opens Safari, Android opens default browser"],
+  ["c", "Anchor click", "iOS opens Safari, Android opens Chrome"],
   ["d", "window.open", "window.open to x-safari"],
   ["e", "replace", "location.replace to x-safari"],
   ["f", "meta refresh", "meta refresh to x-safari"],
@@ -223,9 +223,10 @@ function renderDebugOpenVariant(variant: string, target: string, safari: string,
       setTimeout(function () { window.location.href = "x-safari-https://" + uniqueUrl.replace(/^https?:\\/\\//, ""); }, 200);
     `;
   } else if (variant === "c") {
+    manualAndroidTarget = "androidChromeIntent";
     script = `
       var a = document.createElement("a");
-      a.href = /Android/i.test(navigator.userAgent || "") ? androidDefaultIntent : safari;
+      a.href = /Android/i.test(navigator.userAgent || "") ? androidChromeIntent : safari;
       a.target = "_self";
       a.rel = "noreferrer";
       document.body.appendChild(a);

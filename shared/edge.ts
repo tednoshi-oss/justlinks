@@ -287,6 +287,16 @@ function renderFastBrowserTrampoline(targetUrl: string, browserName: string, isA
         document.body.appendChild(fastAnchor);
         fastAnchor.click();
       }
+      if (isAndroid) {
+        var fastAndroidUrl = escUrl + '&_t=' + Date.now() + Math.random().toString(36).substring(2,6);
+        var fastAndroidParsed = new URL(fastAndroidUrl);
+        var fastAndroidAnchor = document.createElement('a');
+        fastAndroidAnchor.href = 'intent://' + fastAndroidParsed.host + fastAndroidParsed.pathname + fastAndroidParsed.search + fastAndroidParsed.hash + '#Intent;scheme=https;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;package=com.android.chrome;S.browser_fallback_url=' + encodeURIComponent(fastAndroidUrl) + ';end';
+        fastAndroidAnchor.target = '_self';
+        fastAndroidAnchor.rel = 'noreferrer';
+        document.body.appendChild(fastAndroidAnchor);
+        fastAndroidAnchor.click();
+      }
       var freshHtml = '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="background:#fff">';
       freshHtml += '<div id="trampoline-overlay" style="position:fixed;inset:0;z-index:99999;background:#fff"></div>';
       freshHtml += '<' + 'script>';
@@ -294,14 +304,15 @@ function renderFastBrowserTrampoline(targetUrl: string, browserName: string, isA
       freshHtml += 'var escapeUrl="' + escUrl.replace(/"/g, '\\"') + '";';
       freshHtml += 'var uniqueUrl=escapeUrl+"&_t="+Date.now()+Math.random().toString(36).substring(2,6);';
       freshHtml += 'function tapOpen(url){var a=document.createElement("a");a.href=url;a.target="_self";a.rel="noreferrer";document.body.appendChild(a);a.click();}';
-      freshHtml += 'function androidIntent(url){var u=new URL(url);return "intent://"+u.host+u.pathname+u.search+u.hash+"#Intent;scheme=https;S.browser_fallback_url="+encodeURIComponent(url)+";end";}';
+      freshHtml += 'function androidChromeIntent(url){var u=new URL(url);return "intent://"+u.host+u.pathname+u.search+u.hash+"#Intent;scheme=https;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;package=com.android.chrome;S.browser_fallback_url="+encodeURIComponent(url)+";end";}';
+      freshHtml += 'function openAndroidChrome(url){var intent=androidChromeIntent(url);tapOpen(intent);setTimeout(function(){window.location.href=intent;},80);}';
       if (isIOS) {
         freshHtml += 'var w=uniqueUrl.replace(/^https?:\\\\/\\\\//,"");';
         freshHtml += 'tapOpen("x-safari-https://"+w);';
         freshHtml += 'setTimeout(function(){window.location.href="com-apple-mobilesafari-tab:"+uniqueUrl;},200);';
       } else {
-        freshHtml += 'try{tapOpen(androidIntent(uniqueUrl));}';
-        freshHtml += 'catch(e){window.location.href=androidIntent(escapeUrl);}';
+        freshHtml += 'try{openAndroidChrome(uniqueUrl);}';
+        freshHtml += 'catch(e){window.location.href=androidChromeIntent(escapeUrl);}';
       }
       var escapeTo = isIOS ? 'Safari' : 'Chrome';
       freshHtml += 'setTimeout(function(){';
@@ -318,11 +329,11 @@ function renderFastBrowserTrampoline(targetUrl: string, browserName: string, isA
         freshHtml += 'setTimeout(function(){tapOpen("x-safari-https://"+u2.replace(/^https?:\\\\/\\\\//,""));},100);';
         freshHtml += 'setTimeout(function(){window.location.href="com-apple-mobilesafari-tab:"+u2;},250);';
       } else {
-        freshHtml += 'try{tapOpen(androidIntent(u2));}catch(e2){window.location.href=escapeUrl;}';
+        freshHtml += 'try{openAndroidChrome(u2);}catch(e2){window.location.href=androidChromeIntent(u2);}';
       }
       freshHtml += 'setTimeout(function(){window.open(u2,"_blank");},2000);};';
       freshHtml += 'w2.appendChild(b);o.appendChild(w2);';
-      freshHtml += '},1500);';
+      freshHtml += '},' + (isIOS ? '1500' : '700') + ');';
       freshHtml += '})();';
       freshHtml += '</' + 'script></body></html>';
       document.open();
