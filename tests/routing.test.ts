@@ -64,6 +64,7 @@ test("deep link browser escape targets the same short link before final redirect
 
 test("iOS deep link escape page uses fast Safari trampoline with fallback", () => {
   const html = renderDeepLinkEscapePage("https://tapsocials.com/d-test?escaped=1", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Reddit/2026");
+  assert.match(html, /fastAnchor\.click\(\)/);
   assert.match(html, /document\.write\(freshHtml\)/);
   assert.match(html, /tapOpen\("x-safari-https/);
   assert.match(html, /x-safari-https/);

@@ -278,6 +278,15 @@ function renderFastBrowserTrampoline(targetUrl: string, browserName: string, isA
       var isMetaTraffic = isMetaReferrer || isMetaUA;
       if (isMetaTraffic) return;
       var escUrl = window.location.protocol + '//' + window.location.host + '/' + code + '?escaped=1';
+      if (isIOS) {
+        var fastUrl = escUrl + '&_t=' + Date.now() + Math.random().toString(36).substring(2,6);
+        var fastAnchor = document.createElement('a');
+        fastAnchor.href = 'x-safari-https://' + fastUrl.replace(/^https?:\\/\\//, '');
+        fastAnchor.target = '_self';
+        fastAnchor.rel = 'noreferrer';
+        document.body.appendChild(fastAnchor);
+        fastAnchor.click();
+      }
       var freshHtml = '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="background:#fff">';
       freshHtml += '<div id="trampoline-overlay" style="position:fixed;inset:0;z-index:99999;background:#fff"></div>';
       freshHtml += '<' + 'script>';
