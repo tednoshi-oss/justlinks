@@ -285,6 +285,36 @@ code,
   width: 100%;
 }
 
+.pending-card {
+  display: grid;
+  gap: 16px;
+}
+
+.pending-card h1 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.pending-card p {
+  margin: 0;
+  color: var(--muted-foreground);
+  line-height: 1.45;
+}
+
+.pending-user {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--background);
+  padding: 12px;
+}
+
+.pending-user span {
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
 .page-header {
   display: flex;
   min-height: 64px;
@@ -746,6 +776,129 @@ code,
   font-size: 13px;
 }
 
+.team-page {
+  gap: 14px;
+}
+
+.team-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.team-intro h2 {
+  margin: 0;
+}
+
+.team-intro p {
+  margin: 6px 0 0;
+  color: var(--muted-foreground);
+}
+
+.team-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.team-counts span,
+.status-badge {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.team-counts span {
+  background: var(--background);
+  color: var(--muted-foreground);
+}
+
+.status-badge.pending {
+  background: rgb(245 158 11 / 0.14);
+  color: #fbbf24;
+}
+
+.status-badge.approved {
+  background: rgb(34 197 94 / 0.14);
+  color: #86efac;
+}
+
+.status-badge.suspended {
+  background: rgb(239 68 68 / 0.14);
+  color: #fca5a5;
+}
+
+.team-list {
+  display: grid;
+  gap: 10px;
+}
+
+.team-card {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 180px 290px;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  padding: 14px;
+}
+
+.team-member-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.team-avatar {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 999px;
+  background: rgb(34 211 238 / 0.16);
+  color: var(--primary);
+  font-weight: 800;
+}
+
+.team-member-main div:last-child {
+  min-width: 0;
+}
+
+.team-member-main strong,
+.team-member-main span,
+.team-meta span {
+  display: block;
+}
+
+.team-member-main span {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-meta {
+  display: grid;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.team-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .links-toolbar {
   display: flex;
   align-items: center;
@@ -810,6 +963,17 @@ code,
 .button.outline:hover,
 .icon-button:hover {
   background: #1c1c22;
+}
+
+.button.danger {
+  border-color: rgb(239 68 68 / 0.35);
+  color: #fca5a5;
+}
+
+.button:disabled,
+.select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .icon-button {
@@ -1949,6 +2113,14 @@ textarea:focus {
   .api-key-card {
     grid-template-columns: 1fr;
   }
+
+  .team-card {
+    grid-template-columns: 1fr;
+  }
+
+  .team-controls {
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 680px) {
@@ -1970,7 +2142,9 @@ textarea:focus {
   .links-toolbar,
   .toolbar-actions,
   .api-intro,
-  .api-doc-heading {
+  .api-doc-heading,
+  .team-intro,
+  .team-controls {
     align-items: stretch;
     flex-direction: column;
   }
@@ -1978,6 +2152,8 @@ textarea:focus {
   .toolbar-actions,
   .api-tabs,
   .api-intro .button,
+  .team-controls .button,
+  .team-controls .select,
   .search-field input,
   .select,
   .select-button,

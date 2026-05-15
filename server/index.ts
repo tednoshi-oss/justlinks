@@ -28,8 +28,10 @@ import {
   listLinks,
   listPublicApiLinks,
   listRawLinks,
+  listTeamMembers,
   updateGroup,
-  updateLink
+  updateLink,
+  updateTeamMember
 } from "./storage.js";
 import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
 import { classifyReferrer, cleanSlug, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
@@ -254,6 +256,30 @@ app.post("/api/public/delete-link", async (request, response, next) => {
 });
 
 app.use("/api", requireAuth);
+
+app.get("/api/team", async (_request, response, next) => {
+  try {
+    if (!requireAdmin(response)) return;
+    response.json(await listTeamMembers());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/team/:id", async (request, response, next) => {
+  try {
+    const actor = requireAdmin(response);
+    if (!actor) return;
+    const updated = await updateTeamMember(request.params.id, request.body || {}, actor.id);
+    if (!updated) {
+      response.status(404).json({ error: "Team member not found." });
+      return;
+    }
+    response.json(updated);
+  } catch (error) {
+    response.status(400).json({ error: error instanceof Error ? error.message : "Unable to update team member." });
+  }
+});
 
 app.get("/api/api-keys", async (_request, response, next) => {
   try {
@@ -580,6 +606,10 @@ async function requireApiPermission(request: Request, response: express.Response
     response.status(401).json({ error: "Missing or invalid API key." });
     return null;
   }
+  if (context.userStatus !== "approved") {
+    response.status(403).json({ error: "API access revoked, account banned, or account pending approval." });
+    return null;
+  }
   if (!hasApiPermission(context.permissions, permission)) {
     response.status(403).json({ error: "Permission denied for this API key." });
     return null;
@@ -609,6 +639,10 @@ async function requireAuth(request: express.Request, response: express.Response,
       response.status(401).json({ error: "Authentication required." });
       return;
     }
+    if (user.status !== "approved") {
+      response.status(403).json({ error: user.status === "pending" ? "Account pending approval." : "Account suspended." });
+      return;
+    }
     response.locals.user = user;
     next();
   } catch (error) {
@@ -623,6 +657,15 @@ async function getRequestUser(request: Request): Promise<AuthUser | null> {
 function currentUser(response: express.Response): AuthUser {
   const user = response.locals.user as AuthUser | undefined;
   if (!user) throw new Error("Authenticated user missing from request.");
+  return user;
+}
+
+function requireAdmin(response: express.Response): AuthUser | null {
+  const user = currentUser(response);
+  if (user.role !== "owner" && user.role !== "admin") {
+    response.status(403).json({ error: "Admin access required." });
+    return null;
+  }
   return user;
 }
 

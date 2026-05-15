@@ -13,7 +13,10 @@ import type {
   LinkGroup,
   LinkStatus,
   LinkWithStats,
-  SmartLink
+  SmartLink,
+  TeamMember,
+  UserRole,
+  UserStatus
 } from "../shared/types.js";
 import { cleanSlug } from "./routing.js";
 
@@ -37,6 +40,7 @@ export interface ApiKeyAuthContext {
   userId: string;
   keyId: string;
   permissions: ApiKeyPermission[];
+  userStatus: UserStatus;
 }
 
 export interface PublicLinkStats {
@@ -174,6 +178,9 @@ export async function getStore(): Promise<StoreShape> {
       apiKeys: (parsed as Partial<StoreShape>).apiKeys || []
     };
     migrateOwnedData(cachedStore);
+    if (ensureUserAccess(cachedStore)) {
+      await persistStore(cachedStore);
+    }
   } catch {
     cachedStore = {
       links: seedLinks,
@@ -235,13 +242,65 @@ export async function authenticateApiKey(secret: string | undefined): Promise<Ap
   const keyHash = hashApiKey(secret);
   const key = store.apiKeys.find((candidate) => safeCompare(candidate.keyHash, keyHash));
   if (!key) return null;
+  const user = store.users.find((entry) => entry.id === key.userId);
+  if (!user) return null;
   key.lastUsedAt = new Date().toISOString();
   schedulePersist(store);
   return {
     userId: key.userId,
     keyId: key.id,
-    permissions: key.permissions
+    permissions: key.permissions,
+    userStatus: user.status
   };
+}
+
+export async function listTeamMembers(): Promise<TeamMember[]> {
+  const store = await getStore();
+  return store.users
+    .map(publicTeamMember)
+    .sort((a, b) => statusWeight(a.status) - statusWeight(b.status) || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+export async function updateTeamMember(
+  id: string,
+  input: { status?: UserStatus; role?: UserRole },
+  actorUserId: string
+): Promise<TeamMember | null> {
+  const store = await getStore();
+  const actor = store.users.find((user) => user.id === actorUserId);
+  const target = store.users.find((user) => user.id === id);
+  if (!actor || !target || actor.status !== "approved" || !canAdminTeam(actor)) return null;
+
+  const nextStatus = normalizeUserStatus(input.status);
+  const nextRole = normalizeUserRole(input.role);
+
+  if (nextRole && actor.role !== "owner") {
+    throw new Error("Only the owner can change team roles.");
+  }
+  if (target.role === "owner" && actor.role !== "owner") {
+    throw new Error("Only the owner can change another owner.");
+  }
+  if (target.id === actor.id && nextStatus && nextStatus !== "approved") {
+    throw new Error("You cannot suspend your own account.");
+  }
+  if (target.role === "owner" && nextRole && nextRole !== "owner" && countOwners(store) <= 1) {
+    throw new Error("At least one owner is required.");
+  }
+  if (target.role === "owner" && nextStatus && nextStatus !== "approved" && countOwners(store) <= 1) {
+    throw new Error("At least one active owner is required.");
+  }
+
+  if (nextStatus) {
+    target.status = nextStatus;
+    if (nextStatus === "approved") ensureDefaultGroups(store, target.id);
+  }
+  if (nextRole) {
+    target.role = nextRole;
+    if (nextRole === "owner") target.status = "approved";
+  }
+
+  await persistStore(store);
+  return publicTeamMember(target);
 }
 
 export async function listPublicApiLinks(userId: string) {
@@ -338,6 +397,8 @@ export async function createUserAccount(input: { email?: string; name?: string; 
     id: `usr_${cryptoRandom()}`,
     email,
     name: String(input.name || email.split("@")[0] || "User").trim(),
+    role: isFirstUser ? "owner" : "member",
+    status: isFirstUser ? "approved" : "pending",
     passwordHash: hashPassword(password),
     createdAt: now
   };
@@ -642,13 +703,78 @@ function ensureDefaultGroups(store: StoreShape, userId: string): void {
   store.groups.push(...seedGroups.map((group) => ({ ...group, userId })));
 }
 
+function ensureUserAccess(store: StoreShape): boolean {
+  if (!store.users.length) return false;
+
+  let changed = false;
+  const configuredOwnerEmail = normalizeEmail(process.env.OWNER_EMAIL);
+  const existingOwner = store.users.find((user) => user.role === "owner");
+  const configuredOwner = configuredOwnerEmail ? store.users.find((user) => user.email === configuredOwnerEmail) : undefined;
+  const usersByCreatedAt = [...store.users].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const firstHumanUser = usersByCreatedAt.find((user) => !user.email.endsWith(".test") && !user.email.startsWith("api-") && !user.email.includes("@example.com"));
+  const firstUser = usersByCreatedAt[0];
+  const owner = existingOwner || configuredOwner || firstHumanUser || firstUser;
+
+  for (const user of store.users) {
+    const rawRole = (user as Partial<StoredUser>).role;
+    const rawStatus = (user as Partial<StoredUser>).status;
+    const role = normalizeUserRole(rawRole);
+    const status = normalizeUserStatus(rawStatus);
+
+    if (!role) {
+      user.role = user.id === owner.id ? "owner" : "member";
+      changed = true;
+    }
+    if (!status) {
+      user.status = user.id === owner.id ? "approved" : "pending";
+      changed = true;
+    }
+  }
+
+  if (!store.users.some((user) => user.role === "owner")) {
+    owner.role = "owner";
+    owner.status = "approved";
+    changed = true;
+  }
+
+  return changed;
+}
+
+function canAdminTeam(user: Pick<StoredUser, "role">): boolean {
+  return user.role === "owner" || user.role === "admin";
+}
+
+function countOwners(store: StoreShape): number {
+  return store.users.filter((user) => user.role === "owner" && user.status === "approved").length;
+}
+
+function normalizeUserRole(value: unknown): UserRole | null {
+  return value === "owner" || value === "admin" || value === "member" ? value : null;
+}
+
+function normalizeUserStatus(value: unknown): UserStatus | null {
+  return value === "pending" || value === "approved" || value === "suspended" ? value : null;
+}
+
+function statusWeight(status: UserStatus): number {
+  if (status === "pending") return 0;
+  if (status === "approved") return 1;
+  return 2;
+}
+
 function publicUser(user: StoredUser): AuthUser {
   return {
     id: user.id,
     email: user.email,
     name: user.name,
+    role: user.role,
+    status: user.status,
     createdAt: user.createdAt
   };
+}
+
+function publicTeamMember(user: StoredUser): TeamMember {
+  return publicUser(user);
 }
 
 function publicApiKey(key: StoredApiKey): ApiKeySummary {

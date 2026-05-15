@@ -1,4 +1,4 @@
-import type { AnalyticsPayload, ApiKeyPermission, ApiKeySummary, AuthUser, CreatedApiKey, DashboardSummary, LinkGroup, LinkWithStats, SmartLink } from "../shared/types";
+import type { AnalyticsPayload, ApiKeyPermission, ApiKeySummary, AuthUser, CreatedApiKey, DashboardSummary, LinkGroup, LinkWithStats, SmartLink, TeamMember, UserRole, UserStatus } from "../shared/types";
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -53,6 +53,12 @@ export const api = {
       throw new Error(`Logout failed: ${response.status}`);
     }
   },
+  teamMembers: () => requestJson<TeamMember[]>("/api/team"),
+  updateTeamMember: (id: string, payload: { status?: UserStatus; role?: UserRole }) =>
+    requestJson<TeamMember>(`/api/team/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
   summary: () => requestJson<DashboardSummary>("/api/summary"),
   analytics: (days = 30) => requestJson<AnalyticsPayload>(`/api/analytics?days=${days}`),
   apiKeys: () => requestJson<ApiKeySummary[]>("/api/api-keys"),

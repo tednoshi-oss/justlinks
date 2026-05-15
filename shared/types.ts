@@ -1,6 +1,8 @@
 export type DeviceType = "iOS" | "Android" | "Desktop" | "Other";
 export type LinkStatus = "active" | "paused";
 export type ApiKeyPermission = "create_links" | "create_deep_links" | "get_stats";
+export type UserRole = "owner" | "admin" | "member";
+export type UserStatus = "pending" | "approved" | "suspended";
 
 export interface SmartLink {
   id: string;
@@ -92,8 +94,12 @@ export interface AuthUser {
   id: string;
   email: string;
   name: string;
+  role: UserRole;
+  status: UserStatus;
   createdAt: string;
 }
+
+export interface TeamMember extends AuthUser {}
 
 export interface ApiKeySummary {
   id: string;

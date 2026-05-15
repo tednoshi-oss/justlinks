@@ -28,9 +28,9 @@ import {
 } from "lucide-react";
 import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
-import type { AnalyticsPayload, ApiKeyPermission, ApiKeySummary, AuthUser, BreakdownPoint, ClickEvent, CreatedApiKey, DashboardSummary, LinkGroup, LinkWithStats, SmartLink } from "../shared/types";
+import type { AnalyticsPayload, ApiKeyPermission, ApiKeySummary, AuthUser, BreakdownPoint, ClickEvent, CreatedApiKey, DashboardSummary, LinkGroup, LinkWithStats, SmartLink, TeamMember, UserRole, UserStatus } from "../shared/types";
 
-type View = "dashboard" | "links" | "analytics" | "api";
+type View = "dashboard" | "links" | "analytics" | "api" | "team";
 type SortMode = "newest" | "oldest" | "most-clicks" | "least-clicks" | "name-asc" | "name-desc";
 type ApiDocsTab = "manual" | "prompt";
 
@@ -63,6 +63,7 @@ export function App() {
   const [links, setLinks] = useState<LinkWithStats[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsPayload>(blankAnalytics);
   const [apiKeys, setApiKeys] = useState<ApiKeySummary[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [days, setDays] = useState(30);
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("newest");
@@ -100,13 +101,18 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!authUser) return;
+    if (!authUser || authUser.status !== "approved") return;
     void refresh(days);
   }, [days, authUser]);
 
   useEffect(() => {
-    if (!authUser || view !== "api") return;
+    if (!authUser || authUser.status !== "approved" || view !== "api") return;
     void refreshApiKeys();
+  }, [authUser, view]);
+
+  useEffect(() => {
+    if (!authUser || authUser.status !== "approved" || view !== "team" || !canManageTeam(authUser)) return;
+    void refreshTeamMembers();
   }, [authUser, view]);
 
   async function refresh(nextDays = days) {
@@ -143,10 +149,20 @@ export function App() {
     }
   }
 
+  async function refreshTeamMembers() {
+    try {
+      setTeamMembers(await api.teamMembers());
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to load team members.");
+    }
+  }
+
   async function handleAuth(user: AuthUser) {
     setAuthUser(user);
     setError(null);
-    await refresh(days);
+    if (user.status === "approved") {
+      await refresh(days);
+    }
   }
 
   async function logout() {
@@ -156,6 +172,7 @@ export function App() {
     setLinks([]);
     setAnalytics(blankAnalytics);
     setApiKeys([]);
+    setTeamMembers([]);
   }
 
   async function saveApiKey(name: string, permissions: ApiKeyPermission[]): Promise<CreatedApiKey> {
@@ -168,6 +185,11 @@ export function App() {
     if (!window.confirm(`Delete "${key.name}" API key? This cannot be undone.`)) return;
     await api.deleteApiKey(key.id);
     setApiKeys((current) => current.filter((item) => item.id !== key.id));
+  }
+
+  async function saveTeamMember(id: string, payload: { status?: UserStatus; role?: UserRole }) {
+    const updated = await api.updateTeamMember(id, payload);
+    setTeamMembers((current) => current.map((member) => (member.id === updated.id ? updated : member)));
   }
 
   function navigate(nextView: View) {
@@ -264,6 +286,10 @@ export function App() {
     return <AuthScreen onAuthenticated={(user) => void handleAuth(user)} error={error} />;
   }
 
+  if (authUser.status !== "approved") {
+    return <PendingApprovalScreen user={authUser} onLogout={() => void logout()} />;
+  }
+
   return (
     <div className="app-shell">
       <Sidebar active={view} user={authUser} onNavigate={navigate} onLogout={() => void logout()} />
@@ -305,6 +331,7 @@ export function App() {
             ) : null}
             {view === "analytics" ? <AnalyticsView analytics={analytics} days={days} onDaysChange={setDays} /> : null}
             {view === "api" ? <ApiView keys={apiKeys} onCreateKey={saveApiKey} onDeleteKey={(key) => void removeApiKey(key)} /> : null}
+            {view === "team" && canManageTeam(authUser) ? <TeamView members={teamMembers} currentUser={authUser} onUpdate={(id, payload) => void saveTeamMember(id, payload)} /> : null}
           </>
         ) : null}
       </main>
@@ -392,6 +419,30 @@ function AuthScreen({ onAuthenticated, error }: { onAuthenticated: (user: AuthUs
   );
 }
 
+function PendingApprovalScreen({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
+  return (
+    <main className="auth-shell">
+      <section className="auth-card pending-card">
+        <Brand />
+        <div className={`status-badge ${user.status}`}>{user.status === "pending" ? "Pending approval" : "Suspended"}</div>
+        <h1>{user.status === "pending" ? "Your account is waiting for approval." : "Your account is suspended."}</h1>
+        <p>
+          {user.status === "pending"
+            ? "An owner or admin needs to approve your account before you can use TapSocials."
+            : "Contact the TapSocials owner if you believe this should be restored."}
+        </p>
+        <div className="pending-user">
+          <strong>{user.name}</strong>
+          <span>{user.email}</span>
+        </div>
+        <button className="button outline" type="button" onClick={onLogout}>
+          Log out
+        </button>
+      </section>
+    </main>
+  );
+}
+
 function Sidebar({ active, user, onNavigate, onLogout }: { active: View; user: AuthUser; onNavigate: (view: View) => void; onLogout: () => void }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -404,7 +455,7 @@ function Sidebar({ active, user, onNavigate, onLogout }: { active: View; user: A
     <>
       <aside className="sidebar desktop-sidebar" aria-label="Primary">
         <Brand />
-        <NavList active={active} onNavigate={onNavigate} />
+        <NavList active={active} user={user} onNavigate={onNavigate} />
         <div className="sidebar-footer">
           <div>
             <strong>{user.name}</strong>
@@ -426,7 +477,7 @@ function Sidebar({ active, user, onNavigate, onLogout }: { active: View; user: A
       </div>
       {mobileOpen ? (
         <div className="mobile-menu">
-          <NavList active={active} onNavigate={navigateMobile} />
+          <NavList active={active} user={user} onNavigate={navigateMobile} />
         </div>
       ) : null}
     </>
@@ -444,13 +495,14 @@ function Brand({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function NavList({ active, onNavigate }: { active: View; onNavigate: (view: View) => void }) {
+function NavList({ active, user, onNavigate }: { active: View; user: AuthUser; onNavigate: (view: View) => void }) {
   return (
     <nav className="nav-list">
       <NavButton active={active === "dashboard"} icon={<LayoutDashboard size={18} />} label="Dashboard" onClick={() => onNavigate("dashboard")} />
       <NavButton active={active === "links"} icon={<Link2 size={18} />} label="Links" onClick={() => onNavigate("links")} />
       <NavButton active={active === "analytics"} icon={<BarChart3 size={18} />} label="Analytics" onClick={() => onNavigate("analytics")} />
       <NavButton active={active === "api"} icon={<KeyRound size={18} />} label="API" onClick={() => onNavigate("api")} />
+      {canManageTeam(user) ? <NavButton active={active === "team"} icon={<User size={18} />} label="Team" onClick={() => onNavigate("team")} /> : null}
     </nav>
   );
 }
@@ -1134,6 +1186,80 @@ function ApiKeyModal({ onClose, onCreate }: { onClose: () => void; onCreate: (na
         </div>
       </form>
     </div>
+  );
+}
+
+function TeamView({
+  members,
+  currentUser,
+  onUpdate
+}: {
+  members: TeamMember[];
+  currentUser: AuthUser;
+  onUpdate: (id: string, payload: { status?: UserStatus; role?: UserRole }) => void;
+}) {
+  const ownerCanEditRoles = currentUser.role === "owner";
+
+  return (
+    <section className="page-content team-page">
+      <section className="panel team-intro">
+        <div>
+          <h2>Team Access</h2>
+          <p>New accounts stay locked until you approve them.</p>
+        </div>
+        <div className="team-counts">
+          <span>{members.filter((member) => member.status === "pending").length} pending</span>
+          <span>{members.filter((member) => member.status === "approved").length} approved</span>
+        </div>
+      </section>
+
+      <section className="team-list">
+        {members.map((member) => {
+          const isSelf = member.id === currentUser.id;
+          const canTouchStatus = !isSelf && (currentUser.role === "owner" || member.role === "member");
+          return (
+            <article className="team-card" key={member.id}>
+              <div className="team-member-main">
+                <div className="team-avatar">{member.name.slice(0, 1).toUpperCase()}</div>
+                <div>
+                  <strong>{member.name}</strong>
+                  <span>{member.email}</span>
+                </div>
+              </div>
+
+              <div className="team-meta">
+                <span className={`status-badge ${member.status}`}>{statusLabel(member.status)}</span>
+                <span>{timeAgo(member.createdAt)}</span>
+              </div>
+
+              <div className="team-controls">
+                <select
+                  className="select compact"
+                  value={member.role}
+                  disabled={!ownerCanEditRoles || isSelf}
+                  onChange={(event) => onUpdate(member.id, { role: event.target.value as UserRole })}
+                  aria-label={`Role for ${member.name}`}
+                >
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
+                  <option value="owner">Owner</option>
+                </select>
+
+                {member.status === "approved" ? (
+                  <button className="button outline danger" type="button" disabled={!canTouchStatus} onClick={() => onUpdate(member.id, { status: "suspended" })}>
+                    Suspend
+                  </button>
+                ) : (
+                  <button className="button primary" type="button" disabled={!canTouchStatus} onClick={() => onUpdate(member.id, { status: "approved" })}>
+                    Approve
+                  </button>
+                )}
+              </div>
+            </article>
+          );
+        })}
+      </section>
+    </section>
   );
 }
 
@@ -1830,6 +1956,7 @@ function slugify(value: string): string {
 }
 
 function currentView(): View {
+  if (window.location.pathname.includes("/team")) return "team";
   if (window.location.pathname.includes("/api")) return "api";
   if (window.location.pathname.includes("/analytics")) return "analytics";
   if (window.location.pathname.includes("/links")) return "links";
@@ -1837,6 +1964,7 @@ function currentView(): View {
 }
 
 function viewTitle(view: View): string {
+  if (view === "team") return "Team";
   if (view === "api") return "API Keys";
   if (view === "links") return "Links";
   if (view === "analytics") return "Analytics";
@@ -1844,10 +1972,21 @@ function viewTitle(view: View): string {
 }
 
 function viewSubtitle(view: View): string {
+  if (view === "team") return "Approve and manage team access";
   if (view === "api") return "Manage your API access";
   if (view === "links") return "Manage your tracking links";
   if (view === "analytics") return "Detailed performance metrics";
   return "Overview of your link performance";
+}
+
+function canManageTeam(user: AuthUser): boolean {
+  return user.status === "approved" && (user.role === "owner" || user.role === "admin");
+}
+
+function statusLabel(status: UserStatus): string {
+  if (status === "pending") return "Pending";
+  if (status === "approved") return "Approved";
+  return "Suspended";
 }
 
 function daysLabel(days: number): string {
