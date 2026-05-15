@@ -285,14 +285,14 @@ function renderFastBrowserTrampoline(targetUrl: string, browserName: string, isA
       freshHtml += 'var escapeUrl="' + escUrl.replace(/"/g, '\\"') + '";';
       freshHtml += 'var uniqueUrl=escapeUrl+"&_t="+Date.now()+Math.random().toString(36).substring(2,6);';
       freshHtml += 'function tapOpen(url){var a=document.createElement("a");a.href=url;a.target="_self";a.rel="noreferrer";document.body.appendChild(a);a.click();}';
-      freshHtml += 'function androidIntent(url){var u=new URL(url);return "intent://"+u.host+u.pathname+u.search+u.hash+"#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url="+encodeURIComponent(url)+";end";}';
+      freshHtml += 'function androidIntent(url){var u=new URL(url);return "intent://"+u.host+u.pathname+u.search+u.hash+"#Intent;scheme=https;S.browser_fallback_url="+encodeURIComponent(url)+";end";}';
       if (isIOS) {
         freshHtml += 'var w=uniqueUrl.replace(/^https?:\\\\/\\\\//,"");';
         freshHtml += 'tapOpen("x-safari-https://"+w);';
         freshHtml += 'setTimeout(function(){window.location.href="com-apple-mobilesafari-tab:"+uniqueUrl;},200);';
       } else {
         freshHtml += 'try{tapOpen(androidIntent(uniqueUrl));}';
-        freshHtml += 'catch(e){window.location.href="intent:"+escapeUrl+"#Intent;scheme=https;package=com.android.chrome;end";}';
+        freshHtml += 'catch(e){window.location.href=androidIntent(escapeUrl);}';
       }
       var escapeTo = isIOS ? 'Safari' : 'Chrome';
       freshHtml += 'setTimeout(function(){';

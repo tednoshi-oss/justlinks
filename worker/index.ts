@@ -124,12 +124,16 @@ const debugOpenTargetSlug = "d-pctdmkl7";
 const debugOpenVariants = [
   ["a", "ForLinks order", "x-safari first, Safari tab second"],
   ["b", "Safari tab first", "com-apple-mobilesafari-tab first, x-safari second"],
-  ["c", "Anchor click", "iOS opens Safari, Android opens Chrome"],
+  ["c", "Anchor click", "iOS opens Safari, Android opens default browser"],
   ["d", "window.open", "window.open to x-safari"],
   ["e", "replace", "location.replace to x-safari"],
   ["f", "meta refresh", "meta refresh to x-safari"],
   ["g", "302 scheme", "edge 302 redirect to x-safari"],
-  ["h", "shortcut fallback", "Shortcuts x-error then Safari"]
+  ["h", "shortcut fallback", "Shortcuts x-error then Safari"],
+  ["i", "Android default intent", "anchor click to Android default browser"],
+  ["j", "Android Chrome action", "anchor click to Chrome with browsable action"],
+  ["k", "Android Samsung intent", "anchor click to Samsung Internet"],
+  ["l", "Android real tap", "manual tap intent to test Reddit blocking"]
 ] as const;
 
 function handleDebugOpenRequest(url: URL): Response {
@@ -137,7 +141,9 @@ function handleDebugOpenRequest(url: URL): Response {
   const target = debugOpenTarget(url);
   const safari = safariSchemeUrl(target);
   const safariTab = `com-apple-mobilesafari-tab:${target}`;
-  const chromeIntent = androidIntentUrl(target);
+  const androidDefaultIntent = androidIntentUrl(target);
+  const androidChromeIntent = androidIntentUrl(target, "chrome-action");
+  const androidSamsungIntent = androidIntentUrl(target, "samsung");
 
   if (!variant) {
     return htmlResponse(renderDebugOpenIndex(url, target), 200, noCacheHeaders());
@@ -157,7 +163,7 @@ function handleDebugOpenRequest(url: URL): Response {
     });
   }
 
-  return htmlResponse(renderDebugOpenVariant(variant, target, safari, safariTab, chromeIntent), 200, noCacheHeaders());
+  return htmlResponse(renderDebugOpenVariant(variant, target, safari, safariTab, androidDefaultIntent, androidChromeIntent, androidSamsungIntent), 200, noCacheHeaders());
 }
 
 function debugOpenTarget(url: URL): string {
@@ -172,9 +178,11 @@ function safariSchemeUrl(target: string): string {
   return `x-safari-https://${target.replace(/^https?:\/\//, "")}`;
 }
 
-function androidIntentUrl(target: string): string {
+function androidIntentUrl(target: string, browser: "default" | "chrome-action" | "samsung" = "default"): string {
   const url = new URL(target);
-  return `intent://${url.host}${url.pathname}${url.search}${url.hash}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(target)};end`;
+  const packageName = browser === "chrome-action" ? "package=com.android.chrome;" : browser === "samsung" ? "package=com.sec.android.app.sbrowser;" : "";
+  const action = browser === "chrome-action" ? "action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;" : "";
+  return `intent://${url.host}${url.pathname}${url.search}${url.hash}#Intent;scheme=https;${action}${packageName}S.browser_fallback_url=${encodeURIComponent(target)};end`;
 }
 
 function renderDebugOpenIndex(url: URL, target: string): string {
@@ -189,14 +197,17 @@ function renderDebugOpenIndex(url: URL, target: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TapSocials Open Test</title>${debugOpenStyles()}</head><body><main><p class="eyebrow">TapSocials debug</p><h1>Open Browser Test Lab</h1><p class="copy">Send each direct test link in Reddit and tap it from your iPhone. The one that opens Safari without the popup is the method we will move into production.</p><section>${links}</section><p class="target">Target: ${escapeHtml(target)}</p></main></body></html>`;
 }
 
-function renderDebugOpenVariant(variant: string, target: string, safari: string, safariTab: string, chromeIntent: string): string {
+function renderDebugOpenVariant(variant: string, target: string, safari: string, safariTab: string, androidDefaultIntent: string, androidChromeIntent: string, androidSamsungIntent: string): string {
   const jsTarget = JSON.stringify(target);
   const jsSafari = JSON.stringify(safari);
   const jsSafariTab = JSON.stringify(safariTab);
-  const jsChromeIntent = JSON.stringify(chromeIntent);
+  const jsAndroidDefaultIntent = JSON.stringify(androidDefaultIntent);
+  const jsAndroidChromeIntent = JSON.stringify(androidChromeIntent);
+  const jsAndroidSamsungIntent = JSON.stringify(androidSamsungIntent);
   const label = debugOpenVariants.find(([id]) => id === variant)?.[1] || "Test";
   let script = "";
   let extraHead = "";
+  let manualAndroidTarget = "androidDefaultIntent";
 
   if (variant === "a") {
     script = `
@@ -214,7 +225,7 @@ function renderDebugOpenVariant(variant: string, target: string, safari: string,
   } else if (variant === "c") {
     script = `
       var a = document.createElement("a");
-      a.href = /Android/i.test(navigator.userAgent || "") ? chromeIntent : safari;
+      a.href = /Android/i.test(navigator.userAgent || "") ? androidDefaultIntent : safari;
       a.target = "_self";
       a.rel = "noreferrer";
       document.body.appendChild(a);
@@ -243,6 +254,37 @@ function renderDebugOpenVariant(variant: string, target: string, safari: string,
       setTimeout(function () { window.location.href = safari; }, 150);
       setTimeout(function () { window.location.href = safariTab; }, 300);
     `;
+  } else if (variant === "i") {
+    script = `
+      var a = document.createElement("a");
+      a.href = androidDefaultIntent;
+      a.target = "_self";
+      a.rel = "noreferrer";
+      document.body.appendChild(a);
+      a.click();
+    `;
+  } else if (variant === "j") {
+    manualAndroidTarget = "androidChromeIntent";
+    script = `
+      var a = document.createElement("a");
+      a.href = androidChromeIntent;
+      a.target = "_self";
+      a.rel = "noreferrer";
+      document.body.appendChild(a);
+      a.click();
+    `;
+  } else if (variant === "k") {
+    manualAndroidTarget = "androidSamsungIntent";
+    script = `
+      var a = document.createElement("a");
+      a.href = androidSamsungIntent;
+      a.target = "_self";
+      a.rel = "noreferrer";
+      document.body.appendChild(a);
+      a.click();
+    `;
+  } else if (variant === "l") {
+    script = "";
   }
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${extraHead}<title>${escapeHtml(label)}</title>${debugOpenStyles()}</head><body><main><p class="eyebrow">Test ${escapeHtml(variant.toUpperCase())}</p><h1>${escapeHtml(label)}</h1><p class="copy">Trying to open your outside browser now. If Reddit shows no popup for this one, tell me the letter.</p><a class="button" href="${escapeHtml(safari)}">Open manually</a></main><script>
@@ -250,9 +292,11 @@ function renderDebugOpenVariant(variant: string, target: string, safari: string,
       var target = ${jsTarget};
       var safari = ${jsSafari};
       var safariTab = ${jsSafariTab};
-      var chromeIntent = ${jsChromeIntent};
+      var androidDefaultIntent = ${jsAndroidDefaultIntent};
+      var androidChromeIntent = ${jsAndroidChromeIntent};
+      var androidSamsungIntent = ${jsAndroidSamsungIntent};
       var manual = document.querySelector(".button");
-      if (manual && /Android/i.test(navigator.userAgent || "")) manual.href = chromeIntent;
+      if (manual && /Android/i.test(navigator.userAgent || "")) manual.href = ${manualAndroidTarget};
       ${script}
     })();
   </script></body></html>`;

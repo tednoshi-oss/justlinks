@@ -71,11 +71,11 @@ test("iOS deep link escape page uses fast Safari trampoline with fallback", () =
   assert.match(html, /shortcuts:\/\/x-callback-url\/run-shortcut/);
 });
 
-test("Android deep link escape page uses an anchor-click Chrome intent", () => {
+test("Android deep link escape page uses an anchor-click browser intent", () => {
   const html = renderDeepLinkEscapePage("https://tapsocials.com/d-test?escaped=1", "Mozilla/5.0 (Linux; Android 14; Pixel) Reddit/2026");
   assert.match(html, /tapOpen\(androidIntent\(uniqueUrl\)\)/);
   assert.match(html, /intent:\/\//);
-  assert.match(html, /package=com\.android\.chrome/);
+  assert.match(html, /S\.browser_fallback_url/);
 });
 
 test("fast deep link escape runs before link lookup for Reddit and Telegram style traffic", () => {
