@@ -65,7 +65,7 @@ export default {
     const slug = slugFromPath(url.pathname);
     if (!slug) return notFound();
 
-    const link = await getEdgeLink(slug, env);
+    const link = await getEdgeLink(slug, env, context);
     if (!link || link.status !== "active") return notFound();
 
     const device = detectDevice(request.headers.get("user-agent") || "", url.searchParams.get("target") || "");
@@ -142,12 +142,13 @@ async function pruneMissingLinks(expectedKeys: Set<string>, env: Env): Promise<n
   return deleted;
 }
 
-async function getEdgeLink(slug: string, env: Env): Promise<EdgeLinkConfig | null> {
+async function getEdgeLink(slug: string, env: Env, context: ExecutionContext): Promise<EdgeLinkConfig | null> {
   const cached = await env.TAPSOCIALS_LINKS.get<EdgeLinkConfig>(`link:${slug}`, { type: "json" });
   if (cached) return cached;
 
   const fallback = await fetchDashboardJson<EdgeLinkConfig>(`/api/edge/links/${encodeURIComponent(slug)}`, env);
   if (!fallback) return null;
+  context.waitUntil(env.TAPSOCIALS_LINKS.put(`link:${fallback.slug}`, JSON.stringify(fallback)));
   return fallback;
 }
 
