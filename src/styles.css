@@ -1278,6 +1278,10 @@ textarea:focus {
   margin: 0 0 14px;
 }
 
+.notice.modal-error {
+  margin: 14px 0 0;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

@@ -2,11 +2,12 @@ import type { AnalyticsPayload, AuthUser, DashboardSummary, LinkGroup, LinkWithS
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
+    ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers || {})
-    },
-    ...init
+    }
   });
 
   if (!response.ok) {
@@ -47,7 +48,7 @@ export const api = {
     return data.user;
   },
   logout: async () => {
-    const response = await fetch("/api/auth/logout", { method: "POST" });
+    const response = await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     if (!response.ok && response.status !== 204) {
       throw new Error(`Logout failed: ${response.status}`);
     }
@@ -67,7 +68,7 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   deleteGroup: async (id: string) => {
-    const response = await fetch(`/api/groups/${id}`, { method: "DELETE" });
+    const response = await fetch(`/api/groups/${id}`, { method: "DELETE", credentials: "include" });
     if (!response.ok && response.status !== 404) {
       throw new Error(`Delete failed: ${response.status}`);
     }
@@ -83,7 +84,7 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   deleteLink: async (id: string) => {
-    const response = await fetch(`/api/links/${id}`, { method: "DELETE" });
+    const response = await fetch(`/api/links/${id}`, { method: "DELETE", credentials: "include" });
     if (!response.ok && response.status !== 404) {
       throw new Error(`Delete failed: ${response.status}`);
     }

@@ -54,6 +54,10 @@ export default {
       return handleEdgeSyncRequest(request, env, url);
     }
 
+    if (isDashboardApiPath(url.pathname)) {
+      return proxyDashboardApi(request, env, url);
+    }
+
     if (isDashboardPath(url.pathname)) {
       return redirectToDashboard(url, env);
     }
@@ -193,6 +197,30 @@ function redirectToDashboard(url: URL, env: Env): Response {
   destination.search = url.search;
   destination.hash = url.hash;
   return Response.redirect(destination.toString(), 302);
+}
+
+function isDashboardApiPath(pathname: string): boolean {
+  return pathname === "/api" || pathname.startsWith("/api/");
+}
+
+function proxyDashboardApi(request: Request, env: Env, url: URL): Promise<Response> {
+  const origin = new URL(env.DASHBOARD_ORIGIN);
+  const destination = new URL(`${url.pathname}${url.search}`, origin);
+  const headers = new Headers(request.headers);
+  headers.set("host", origin.host);
+  headers.set("x-forwarded-host", url.host);
+  headers.set("x-forwarded-proto", url.protocol.replace(":", ""));
+
+  const init: RequestInit = {
+    method: request.method,
+    headers,
+    redirect: "manual"
+  };
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    init.body = request.body;
+  }
+
+  return fetch(destination.toString(), init);
 }
 
 function isAuthorizedEdgeRequest(request: Request, env: Env): boolean {

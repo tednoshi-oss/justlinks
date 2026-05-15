@@ -116,10 +116,8 @@ export function App() {
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Unable to load dashboard.";
       if (message.includes("Authentication required")) {
-        setAuthUser(null);
-        setSummary(null);
-        setLinks([]);
-        setAnalytics(blankAnalytics);
+        setError("Your session could not be verified for that request. Please refresh the page and try again.");
+        return;
       }
       setError(message);
     } finally {
@@ -944,10 +942,12 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
   const [customCode, setCustomCode] = useState(Boolean(editLink));
   const [deepLink, setDeepLink] = useState(editLink ? isDeepLink(editLink) : false);
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setSaving(true);
+    setFormError(null);
     const cleanedSlug = customCode && shortCode ? normalizeShortCode(shortCode, deepLink) : !isEdit ? randomCode(deepLink) : undefined;
     try {
       await onSubmit({
@@ -964,7 +964,7 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
         forceExternalBrowser: deepLink
       } as Partial<SmartLink>);
     } catch (error) {
-      console.error(error);
+      setFormError(error instanceof Error ? error.message : "Unable to save this link. Please try again.");
       setSaving(false);
     }
   }
@@ -1054,6 +1054,8 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
           </div>
           {isEdit ? <small className="warning-text">Locked - create a new link to change this setting.</small> : null}
         </div>
+
+        {formError ? <div className="notice error modal-error">{formError}</div> : null}
 
         <div className="modal-actions">
           <button className="button outline" type="button" onClick={onClose}>
