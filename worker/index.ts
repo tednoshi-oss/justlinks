@@ -5,11 +5,15 @@ import {
   detectDevice,
   type EdgeClickEvent,
   type EdgeLinkConfig,
+  isLinkPreviewBot,
   isEscapedBrowserRequest,
   isHttpUrl,
   isMobileDevice,
   isDashboardPath,
+  parseHtmlMetadata,
+  previewFetchUrl,
   renderDeepLinkEscapePage,
+  renderLinkPreviewPage,
   selectWebFallback,
   selectDestination,
   shouldServeFastDeepLinkEscape,
@@ -67,6 +71,12 @@ export default {
     if (!slug) return notFound();
 
     const userAgent = request.headers.get("user-agent") || "";
+    if (isLinkPreviewBot(userAgent) && !isEscapedBrowserRequest(url.searchParams)) {
+      const previewLink = await getEdgeLink(slug, env, context);
+      if (!previewLink || previewLink.status !== "active") return notFound();
+      return htmlResponse(await renderPreviewForLink(previewLink, request.url), 200, previewHeaders());
+    }
+
     if (
       shouldServeFastDeepLinkEscape({
         pathname: url.pathname,
@@ -75,7 +85,7 @@ export default {
         referrer: request.headers.get("referer")
       })
     ) {
-      return htmlResponse(renderDeepLinkEscapePage(deepLinkEscapeUrl(request.url), userAgent));
+      return htmlResponse(renderDeepLinkEscapePage(deepLinkEscapeUrl(request.url), userAgent), 200, noCacheHeaders());
     }
 
     const link = await getEdgeLink(slug, env, context);
@@ -95,7 +105,7 @@ export default {
 
     if (browserEscape && isHttpUrl(webDestination) && isMobileDevice(device)) {
       if (isEscapedBrowserRequest(url.searchParams)) return Response.redirect(webDestination, 302);
-      return htmlResponse(renderDeepLinkEscapePage(deepLinkEscapeUrl(request.url), request.headers.get("user-agent") || ""));
+      return htmlResponse(renderDeepLinkEscapePage(deepLinkEscapeUrl(request.url), userAgent), 200, noCacheHeaders());
     }
 
     return Response.redirect(destination, 302);
@@ -163,6 +173,57 @@ async function getEdgeLink(slug: string, env: Env, context: ExecutionContext): P
   if (!fallback) return null;
   context.waitUntil(env.TAPSOCIALS_LINKS.put(`link:${fallback.slug}`, JSON.stringify(fallback)));
   return fallback;
+}
+
+async function renderPreviewForLink(link: EdgeLinkConfig, shortUrl: string): Promise<string> {
+  const destination = selectWebFallback(link);
+  const metadata = await fetchPreviewMetadata(destination, link);
+  return renderLinkPreviewPage(metadata, shortUrl, destination);
+}
+
+async function fetchPreviewMetadata(destination: string, link: EdgeLinkConfig) {
+  const fetchUrl = previewFetchUrl(destination);
+  const fallback = fallbackPreviewMetadata(destination, link);
+
+  try {
+    const response = await fetch(fetchUrl, {
+      headers: {
+        Accept: "text/html,application/xhtml+xml",
+        "User-Agent": "TelegramBot (like TwitterBot)"
+      }
+    });
+    if (!response.ok) return fallback;
+    const html = await response.text();
+    const parsed = parseHtmlMetadata(html, response.url || fetchUrl);
+    return {
+      title: parsed.title || fallback.title,
+      description: parsed.description || fallback.description,
+      image: parsed.image || fallback.image,
+      siteName: parsed.siteName || fallback.siteName,
+      url: parsed.url || fallback.url
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function fallbackPreviewMetadata(destination: string, link: EdgeLinkConfig) {
+  const host = safeHost(destination);
+  return {
+    title: link.name || host || "TapSocials link",
+    description: link.description || destination,
+    image: undefined,
+    siteName: host || "TapSocials",
+    url: destination
+  };
+}
+
+function safeHost(value: string): string {
+  try {
+    return new URL(value).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
 }
 
 async function buildClickEvent(request: Request, link: EdgeLinkConfig, destination: string, device: EdgeClickEvent["device"]): Promise<EdgeClickEvent> {
@@ -264,8 +325,30 @@ function notFound(): Response {
   );
 }
 
-function htmlResponse(html: string, status = 200): Response {
-  return new Response(html, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
+function htmlResponse(html: string, status = 200, extraHeaders: HeadersInit = {}): Response {
+  return new Response(html, {
+    status,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      ...extraHeaders
+    }
+  });
+}
+
+function noCacheHeaders(): HeadersInit {
+  return {
+    "Cache-Control": "no-cache, must-revalidate, max-age=0",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "X-Content-Type-Options": "nosniff"
+  };
+}
+
+function previewHeaders(): HeadersInit {
+  return {
+    "Cache-Control": "public, max-age=600",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "X-Content-Type-Options": "nosniff"
+  };
 }
 
 function openInBrowserPage(destination: string): Response {

@@ -2,7 +2,9 @@ import type { DeviceType, LinkStatus, SmartLink } from "./types.js";
 
 export interface EdgeLinkConfig {
   id: string;
+  name?: string;
   slug: string;
+  description?: string;
   status: LinkStatus;
   iosUrl: string;
   androidUrl: string;
@@ -25,13 +27,23 @@ export interface EdgeClickEvent {
   destination: string;
 }
 
+export interface LinkPreviewMetadata {
+  title: string;
+  description: string;
+  image?: string;
+  siteName?: string;
+  url: string;
+}
+
 export const dashboardPathPrefixes = ["/dashboard", "/api", "/assets"] as const;
 export const dashboardExactPaths = ["/", "/favicon.png", "/favicon.svg", "/tapsocials-logo.svg", "/robots.txt", "/manifest.webmanifest"] as const;
 
 export function toEdgeLink(link: SmartLink): EdgeLinkConfig {
   return {
     id: link.id,
+    name: link.name,
     slug: link.slug,
+    description: link.description || link.notes,
     status: link.status,
     iosUrl: link.iosUrl,
     androidUrl: link.androidUrl,
@@ -141,6 +153,10 @@ export function shouldServeFastDeepLinkEscape({
   return true;
 }
 
+export function isLinkPreviewBot(userAgent = ""): boolean {
+  return /TelegramBot|Twitterbot|facebookexternalhit|Facebot|WhatsApp|Slackbot|Discordbot|LinkedInBot|Pinterest|SkypeUriPreview|redditbot|Applebot|Googlebot|bingbot|bot|crawler|spider/i.test(userAgent);
+}
+
 export function isEscapedBrowserRequest(searchParams: URLSearchParams): boolean {
   return searchParams.get("escaped") === "1";
 }
@@ -194,12 +210,99 @@ export function renderDeepLinkEscapePage(targetUrl: string, userAgent = ""): str
   return renderFastBrowserTrampoline(targetUrl, browserName, isAndroid, safeTarget);
 }
 
+export function previewFetchUrl(destination: string): string {
+  try {
+    const url = new URL(destination);
+    const host = url.hostname.replace(/^www\./, "");
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (host === "fanvue.com" && parts.length >= 2 && /^fv-[a-z0-9_-]+$/i.test(parts[1])) {
+      return `${url.protocol}//${url.host}/${parts[0]}`;
+    }
+    return url.toString();
+  } catch {
+    return destination;
+  }
+}
+
+export function parseHtmlMetadata(html: string, baseUrl: string): Partial<LinkPreviewMetadata> {
+  const title = metaContent(html, "og:title") || metaContent(html, "twitter:title") || titleContent(html);
+  const description = metaContent(html, "og:description") || metaContent(html, "twitter:description") || metaContent(html, "description");
+  const image = metaContent(html, "og:image") || metaContent(html, "twitter:image");
+  const siteName = metaContent(html, "og:site_name") || metaContent(html, "application-name");
+  const canonical = linkHref(html, "canonical") || metaContent(html, "og:url");
+
+  return {
+    title: title ? decodeHtml(title).trim() : undefined,
+    description: description ? decodeHtml(description).trim() : undefined,
+    image: image ? absoluteUrl(decodeHtml(image).trim(), baseUrl) : undefined,
+    siteName: siteName ? decodeHtml(siteName).trim() : undefined,
+    url: canonical ? absoluteUrl(decodeHtml(canonical).trim(), baseUrl) : baseUrl
+  };
+}
+
+export function renderLinkPreviewPage(metadata: LinkPreviewMetadata, shortUrl: string, destination: string): string {
+  const title = escapeHtml(metadata.title);
+  const description = escapeHtml(metadata.description);
+  const image = metadata.image ? escapeHtml(metadata.image) : "";
+  const siteName = escapeHtml(metadata.siteName || new URL(shortUrl).hostname.replace(/^www\./, ""));
+  const safeShortUrl = escapeHtml(shortUrl);
+  const safeDestination = escapeHtml(destination);
+  const jsDestination = JSON.stringify(destination);
+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><meta name="description" content="${description}"><meta property="og:type" content="website"><meta property="og:url" content="${safeShortUrl}"><meta property="og:site_name" content="${siteName}"><meta property="og:title" content="${title}"><meta property="og:description" content="${description}">${image ? `<meta property="og:image" content="${image}"><meta name="twitter:image" content="${image}">` : ""}<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${title}"><meta name="twitter:description" content="${description}"><link rel="canonical" href="${safeShortUrl}"><script>if(!/bot|crawler|spider|preview|telegram|twitter|facebook|whatsapp|discord|slack|reddit/i.test(navigator.userAgent||"")){window.location.replace(${jsDestination});}</script></head><body><main><a href="${safeDestination}" rel="nofollow noreferrer">Continue</a></main></body></html>`;
+}
+
 function renderFastBrowserTrampoline(targetUrl: string, browserName: string, isAndroid: boolean, safeTarget: string): string {
   const jsTarget = JSON.stringify(targetUrl);
   const jsBrowser = JSON.stringify(browserName);
   const jsIsAndroid = JSON.stringify(isAndroid);
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Opening link</title></head><body style="background:#fff"><script>(function(){var escapeUrl=${jsTarget};var escapeTo=${jsBrowser};var isAndroid=${jsIsAndroid};var freshHtml='<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="background:#fff">';freshHtml+='<div id="trampoline-overlay" style="position:fixed;inset:0;z-index:99999;background:#fff"></div>';freshHtml+='<scr'+'ipt>';freshHtml+='(function(){';freshHtml+='var escapeUrl='+JSON.stringify(escapeUrl)+';';freshHtml+='var escapeTo='+JSON.stringify(escapeTo)+';';freshHtml+='var isAndroid='+JSON.stringify(isAndroid)+';';freshHtml+='function fresh(url){return url+(url.indexOf("?")!==-1?"&":"?")+"_t="+Date.now()+Math.random().toString(36).substring(2,6);}';freshHtml+='var uniqueUrl=fresh(escapeUrl);';freshHtml+='if(isAndroid){try{var u=new URL(uniqueUrl);window.location.href="intent://"+u.host+u.pathname+u.search+u.hash+"#Intent;scheme="+u.protocol.replace(":","")+";package=com.android.chrome;S.browser_fallback_url="+encodeURIComponent(uniqueUrl)+";end";}catch(e){window.location.href=uniqueUrl;}}else{var w=uniqueUrl.replace(/^https?:\\\\/\\\\//,"");window.location.href="x-safari-https://"+w;setTimeout(function(){window.location.href="com-apple-mobilesafari-tab:"+uniqueUrl;},200);}';freshHtml+='setTimeout(function(){var o=document.getElementById("trampoline-overlay");if(!o)return;var w2=document.createElement("div");w2.style.cssText="position:absolute;bottom:60px;left:0;right:0;text-align:center";var b=document.createElement("a");b.href="#";b.style.cssText="display:inline-block;padding:14px 32px;background:#000;color:#fff;font-weight:600;font-size:16px;border-radius:12px;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,sans-serif";b.textContent="Open in "+escapeTo;b.onclick=function(ev){ev.preventDefault();var u2=fresh(escapeUrl);if(isAndroid){try{var u3=new URL(u2);window.location.href="intent://"+u3.host+u3.pathname+u3.search+u3.hash+"#Intent;scheme="+u3.protocol.replace(":","")+";package=com.android.chrome;end";}catch(e2){window.location.href=u2;}}else{var rn=Math.random().toString(36).substring(2,10);window.location.href="shortcuts://x-callback-url/run-shortcut?name="+rn+"&x-error="+encodeURIComponent(u2);setTimeout(function(){window.location.href="x-safari-https://"+u2.replace(/^https?:\\\\/\\\\//,"");},100);setTimeout(function(){window.location.href="com-apple-mobilesafari-tab:"+u2;},250);}setTimeout(function(){window.open(u2,"_blank");},2000);};w2.appendChild(b);o.appendChild(w2);},1500);';freshHtml+='})();';freshHtml+='</scr'+'ipt></body></html>';document.open();document.write(freshHtml);document.close();})();</script><noscript><p><a href="${safeTarget}">Open in ${escapeHtml(browserName)}</a></p></noscript></body></html>`;
+}
+
+function metaContent(html: string, key: string): string | undefined {
+  const tags = html.match(/<meta\b[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const name = attrValue(tag, "property") || attrValue(tag, "name");
+    if (name?.toLowerCase() === key.toLowerCase()) return attrValue(tag, "content");
+  }
+  return undefined;
+}
+
+function linkHref(html: string, rel: string): string | undefined {
+  const tags = html.match(/<link\b[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const value = attrValue(tag, "rel");
+    if (value?.toLowerCase() === rel.toLowerCase()) return attrValue(tag, "href");
+  }
+  return undefined;
+}
+
+function attrValue(tag: string, name: string): string | undefined {
+  const pattern = new RegExp(`${name}\\s*=\\s*(["'])(.*?)\\1`, "i");
+  return tag.match(pattern)?.[2];
+}
+
+function titleContent(html: string): string | undefined {
+  return html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1];
+}
+
+function absoluteUrl(value: string, baseUrl: string): string {
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return value;
+  }
+}
+
+function decodeHtml(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#x27;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
 }
 
 export function classifyReferrer(value?: string | null): string {

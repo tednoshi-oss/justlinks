@@ -27,8 +27,8 @@ import {
 } from "./storage.js";
 import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
 import { classifyReferrer, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
-import { deepLinkEscapeUrl, isEscapedBrowserRequest, isHttpUrl, isMobileDevice, renderDeepLinkEscapePage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
-import type { AuthUser, ClickEvent } from "../shared/types.js";
+import { deepLinkEscapeUrl, isEscapedBrowserRequest, isHttpUrl, isLinkPreviewBot, isMobileDevice, parseHtmlMetadata, previewFetchUrl, renderDeepLinkEscapePage, renderLinkPreviewPage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
+import type { AuthUser, ClickEvent, SmartLink } from "../shared/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -264,6 +264,21 @@ app.get("/:slug", (request, response, next) => {
 async function redirectSlug(request: express.Request, response: express.Response, next: express.NextFunction) {
   try {
     const userAgent = request.get("user-agent") || "";
+    if (isLinkPreviewBot(userAgent) && !isEscapedBrowserRequest(new URLSearchParams(request.query as Record<string, string>))) {
+      const link = await findLinkBySlug(request.params.slug);
+      if (!link || link.status !== "active") {
+        response.status(404).send(renderMissingLink());
+        return;
+      }
+      response.set({
+        "Cache-Control": "public, max-age=600",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.status(200).send(await renderPreviewForLink(link, absoluteRequestUrl(request)));
+      return;
+    }
+
     if (
       shouldServeFastDeepLinkEscape({
         pathname: request.path,
@@ -272,6 +287,11 @@ async function redirectSlug(request: express.Request, response: express.Response
         referrer: request.get("referer")
       })
     ) {
+      response.set({
+        "Cache-Control": "no-cache, must-revalidate, max-age=0",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "X-Content-Type-Options": "nosniff"
+      });
       response.status(200).send(renderDeepLinkEscapePage(deepLinkEscapeUrl(absoluteRequestUrl(request)), userAgent));
       return;
     }
@@ -316,6 +336,57 @@ async function redirectSlug(request: express.Request, response: express.Response
     response.redirect(302, destination);
   } catch (error) {
     next(error);
+  }
+}
+
+async function renderPreviewForLink(link: SmartLink, shortUrl: string): Promise<string> {
+  const destination = selectWebFallback(link);
+  const metadata = await fetchPreviewMetadata(destination, link);
+  return renderLinkPreviewPage(metadata, shortUrl, destination);
+}
+
+async function fetchPreviewMetadata(destination: string, link: SmartLink) {
+  const fetchUrl = previewFetchUrl(destination);
+  const fallback = fallbackPreviewMetadata(destination, link);
+
+  try {
+    const response = await fetch(fetchUrl, {
+      headers: {
+        Accept: "text/html,application/xhtml+xml",
+        "User-Agent": "TelegramBot (like TwitterBot)"
+      }
+    });
+    if (!response.ok) return fallback;
+    const html = await response.text();
+    const parsed = parseHtmlMetadata(html, response.url || fetchUrl);
+    return {
+      title: parsed.title || fallback.title,
+      description: parsed.description || fallback.description,
+      image: parsed.image || fallback.image,
+      siteName: parsed.siteName || fallback.siteName,
+      url: parsed.url || fallback.url
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function fallbackPreviewMetadata(destination: string, link: SmartLink) {
+  const host = safeHost(destination);
+  return {
+    title: link.name || host || "TapSocials link",
+    description: link.description || link.notes || destination,
+    image: undefined,
+    siteName: host || "TapSocials",
+    url: destination
+  };
+}
+
+function safeHost(value: string): string {
+  try {
+    return new URL(value).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
   }
 }
 

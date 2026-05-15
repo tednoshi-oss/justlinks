@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SmartLink } from "../shared/types.js";
-import { androidExternalBrowserIntent, deepLinkEscapeUrl, externalBrowserEscapeAttemptUrl, isEscapedBrowserRequest, isInAppBrowser, renderDeepLinkEscapePage, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape } from "../shared/edge.js";
+import { androidExternalBrowserIntent, deepLinkEscapeUrl, externalBrowserEscapeAttemptUrl, isEscapedBrowserRequest, isInAppBrowser, isLinkPreviewBot, parseHtmlMetadata, previewFetchUrl, renderDeepLinkEscapePage, renderLinkPreviewPage, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape } from "../shared/edge.js";
 import { cleanSlug, detectDevice, selectDestination } from "../server/routing.js";
 
 const link: SmartLink = {
@@ -81,4 +81,34 @@ test("fast deep link escape runs before link lookup for Reddit and Telegram styl
   assert.equal(shouldServeFastDeepLinkEscape({ pathname: "/d-PAXGfRB1", searchParams: new URLSearchParams(), userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X)" }), false);
   assert.equal(shouldServeFastDeepLinkEscape({ pathname: "/d-PAXGfRB1", searchParams: new URLSearchParams(), userAgent: `${redditIos} Instagram` }), false);
   assert.equal(shouldServeFastDeepLinkEscape({ pathname: "/d-PAXGfRB1", searchParams: new URLSearchParams(), userAgent: "FBAN/FBIOS", referrer: "https://facebook.com/" }), false);
+});
+
+test("link preview helpers use rich destination metadata", () => {
+  assert.equal(previewFetchUrl("https://www.fanvue.com/rileybabe/fv-22"), "https://www.fanvue.com/rileybabe");
+  assert.equal(isLinkPreviewBot("TelegramBot (like TwitterBot)"), true);
+  assert.equal(isLinkPreviewBot("Mozilla/5.0 Safari/605.1.15"), false);
+
+  const metadata = parseHtmlMetadata(
+    '<html><head><title>Fallback</title><meta property="og:title" content="Riley&#x27;s Fanvue"><meta property="og:description" content="Bio &amp; more"><meta property="og:image" content="/avatar.png"><meta property="og:site_name" content="Fanvue"></head></html>',
+    "https://www.fanvue.com/rileybabe"
+  );
+  assert.equal(metadata.title, "Riley's Fanvue");
+  assert.equal(metadata.description, "Bio & more");
+  assert.equal(metadata.image, "https://www.fanvue.com/avatar.png");
+  assert.equal(metadata.siteName, "Fanvue");
+
+  const html = renderLinkPreviewPage(
+    {
+      title: "Riley's Fanvue",
+      description: "Bio & more",
+      image: "https://www.fanvue.com/avatar.png",
+      siteName: "Fanvue",
+      url: "https://www.fanvue.com/rileybabe"
+    },
+    "https://tapsocials.com/d-test",
+    "https://www.fanvue.com/rileybabe/fv-22"
+  );
+  assert.match(html, /og:title/);
+  assert.match(html, /Riley&#39;s Fanvue/);
+  assert.match(html, /https:\/\/www\.fanvue\.com\/avatar\.png/);
 });
