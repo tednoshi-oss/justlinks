@@ -4,12 +4,12 @@ import {
   BookOpen,
   Briefcase,
   ChevronDown,
-  Code2,
   Copy,
   Download,
   Edit3,
   Filter,
   Info,
+  KeyRound,
   LayoutDashboard,
   Link2,
   LogOut,
@@ -450,7 +450,7 @@ function NavList({ active, onNavigate }: { active: View; onNavigate: (view: View
       <NavButton active={active === "dashboard"} icon={<LayoutDashboard size={18} />} label="Dashboard" onClick={() => onNavigate("dashboard")} />
       <NavButton active={active === "links"} icon={<Link2 size={18} />} label="Links" onClick={() => onNavigate("links")} />
       <NavButton active={active === "analytics"} icon={<BarChart3 size={18} />} label="Analytics" onClick={() => onNavigate("analytics")} />
-      <NavButton active={active === "api"} icon={<Code2 size={18} />} label="API" onClick={() => onNavigate("api")} />
+      <NavButton active={active === "api"} icon={<KeyRound size={18} />} label="API" onClick={() => onNavigate("api")} />
     </nav>
   );
 }
