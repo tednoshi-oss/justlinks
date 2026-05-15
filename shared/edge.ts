@@ -253,11 +253,72 @@ export function renderLinkPreviewPage(metadata: LinkPreviewMetadata, shortUrl: s
 }
 
 function renderFastBrowserTrampoline(targetUrl: string, browserName: string, isAndroid: boolean, safeTarget: string): string {
-  const jsTarget = JSON.stringify(targetUrl);
-  const jsBrowser = JSON.stringify(browserName);
-  const jsIsAndroid = JSON.stringify(isAndroid);
+  void targetUrl;
+  void browserName;
+  void isAndroid;
 
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Opening link</title></head><body style="background:#fff"><script>(function(){var escapeUrl=${jsTarget};var escapeTo=${jsBrowser};var isAndroid=${jsIsAndroid};var freshHtml='<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="background:#fff">';freshHtml+='<div id="trampoline-overlay" style="position:fixed;inset:0;z-index:99999;background:#fff"></div>';freshHtml+='<scr'+'ipt>';freshHtml+='(function(){';freshHtml+='var escapeUrl='+JSON.stringify(escapeUrl)+';';freshHtml+='var escapeTo='+JSON.stringify(escapeTo)+';';freshHtml+='var isAndroid='+JSON.stringify(isAndroid)+';';freshHtml+='function fresh(url){return url+(url.indexOf("?")!==-1?"&":"?")+"_t="+Date.now()+Math.random().toString(36).substring(2,6);}';freshHtml+='var uniqueUrl=fresh(escapeUrl);';freshHtml+='if(isAndroid){try{var u=new URL(uniqueUrl);window.location.href="intent://"+u.host+u.pathname+u.search+u.hash+"#Intent;scheme="+u.protocol.replace(":","")+";package=com.android.chrome;S.browser_fallback_url="+encodeURIComponent(uniqueUrl)+";end";}catch(e){window.location.href=uniqueUrl;}}else{var w=uniqueUrl.replace(/^https?:\\\\/\\\\//,"");window.location.href="x-safari-https://"+w;setTimeout(function(){window.location.href="com-apple-mobilesafari-tab:"+uniqueUrl;},200);}';freshHtml+='setTimeout(function(){var o=document.getElementById("trampoline-overlay");if(!o)return;var w2=document.createElement("div");w2.style.cssText="position:absolute;bottom:60px;left:0;right:0;text-align:center";var b=document.createElement("a");b.href="#";b.style.cssText="display:inline-block;padding:14px 32px;background:#000;color:#fff;font-weight:600;font-size:16px;border-radius:12px;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,sans-serif";b.textContent="Open in "+escapeTo;b.onclick=function(ev){ev.preventDefault();var u2=fresh(escapeUrl);if(isAndroid){try{var u3=new URL(u2);window.location.href="intent://"+u3.host+u3.pathname+u3.search+u3.hash+"#Intent;scheme="+u3.protocol.replace(":","")+";package=com.android.chrome;end";}catch(e2){window.location.href=u2;}}else{var rn=Math.random().toString(36).substring(2,10);window.location.href="shortcuts://x-callback-url/run-shortcut?name="+rn+"&x-error="+encodeURIComponent(u2);setTimeout(function(){window.location.href="x-safari-https://"+u2.replace(/^https?:\\\\/\\\\//,"");},100);setTimeout(function(){window.location.href="com-apple-mobilesafari-tab:"+u2;},250);}setTimeout(function(){window.open(u2,"_blank");},2000);};w2.appendChild(b);o.appendChild(w2);},1500);';freshHtml+='})();';freshHtml+='</scr'+'ipt></body></html>';document.open();document.write(freshHtml);document.close();})();</script><noscript><p><a href="${safeTarget}">Open in ${escapeHtml(browserName)}</a></p></noscript></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Opening link</title></head><body style="background:#fff"><script>
+    (function() {
+      var ua = navigator.userAgent || '';
+      var path = window.location.pathname;
+      var search = window.location.search || '';
+      if (search.indexOf('escaped=1') !== -1) return;
+      var isIOS = /iPhone|iPad|iPod/i.test(ua);
+      var isAndroid = /Android/i.test(ua);
+      var isInstagram = /Instagram/i.test(ua);
+      if (isInstagram && (isIOS || isAndroid)) return;
+      var isDeepLink = /^\\/d-[a-zA-Z0-9_-]{3,64}$/.test(path);
+      if (!isDeepLink) return;
+      var code = path.substring(1);
+      if (!isIOS && !isAndroid) return;
+      var referrer = document.referrer || '';
+      var metaReferrerPatterns = ['facebook.com', 'l.facebook.com', 'lm.facebook.com', 'm.facebook.com', 'threads.net', 'whatsapp.com', 'wa.me', 'web.whatsapp.com', 'tiktok.com', 'vm.tiktok.com'];
+      var isMetaReferrer = metaReferrerPatterns.some(function(p) { return referrer.toLowerCase().indexOf(p) !== -1; });
+      var isMetaUA = /FBAN|FBAV|FB_IAB|Threads|TikTok|BytedanceWebview/i.test(ua);
+      var isMetaTraffic = isMetaReferrer || isMetaUA;
+      if (isMetaTraffic) return;
+      var escUrl = window.location.protocol + '//' + window.location.host + '/' + code + '?escaped=1';
+      var freshHtml = '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="background:#fff">';
+      freshHtml += '<div id="trampoline-overlay" style="position:fixed;inset:0;z-index:99999;background:#fff"></div>';
+      freshHtml += '<' + 'script>';
+      freshHtml += '(function(){';
+      freshHtml += 'var escapeUrl="' + escUrl.replace(/"/g, '\\"') + '";';
+      freshHtml += 'var uniqueUrl=escapeUrl+"&_t="+Date.now()+Math.random().toString(36).substring(2,6);';
+      if (isIOS) {
+        freshHtml += 'var w=uniqueUrl.replace(/^https?:\\\\/\\\\//,"");';
+        freshHtml += 'window.location.href="x-safari-https://"+w;';
+        freshHtml += 'setTimeout(function(){window.location.href="com-apple-mobilesafari-tab:"+uniqueUrl;},200);';
+      } else {
+        freshHtml += 'try{var u=new URL(escapeUrl);window.location.href="intent://"+u.host+u.pathname+u.search+"#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url="+encodeURIComponent(escapeUrl)+";end";}';
+        freshHtml += 'catch(e){window.location.href="intent:"+escapeUrl+"#Intent;scheme=https;package=com.android.chrome;end";}';
+      }
+      var escapeTo = isIOS ? 'Safari' : 'Chrome';
+      freshHtml += 'setTimeout(function(){';
+      freshHtml += 'var o=document.getElementById("trampoline-overlay");if(!o)return;';
+      freshHtml += 'var w2=document.createElement("div");w2.style.cssText="position:absolute;bottom:60px;left:0;right:0;text-align:center";';
+      freshHtml += 'var b=document.createElement("a");b.href="#";';
+      freshHtml += 'b.style.cssText="display:inline-block;padding:14px 32px;background:#000;color:#fff;font-weight:600;font-size:16px;border-radius:12px;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,sans-serif";';
+      freshHtml += 'b.textContent="Open in ' + escapeTo + '";';
+      freshHtml += 'b.onclick=function(ev){ev.preventDefault();';
+      freshHtml += 'var u2=escapeUrl+"&_t="+Date.now()+Math.random().toString(36).substring(2,6);';
+      if (isIOS) {
+        freshHtml += 'var rn=Math.random().toString(36).substring(2,10);';
+        freshHtml += 'window.location.href="shortcuts://x-callback-url/run-shortcut?name="+rn+"&x-error="+encodeURIComponent(u2);';
+        freshHtml += 'setTimeout(function(){window.location.href="x-safari-https://"+u2.replace(/^https?:\\\\/\\\\//,"");},100);';
+        freshHtml += 'setTimeout(function(){window.location.href="com-apple-mobilesafari-tab:"+u2;},250);';
+      } else {
+        freshHtml += 'try{var u3=new URL(escapeUrl);window.location.href="intent://"+u3.host+u3.pathname+u3.search+"#Intent;scheme=https;package=com.android.chrome;end";}catch(e2){window.location.href=escapeUrl;}';
+      }
+      freshHtml += 'setTimeout(function(){window.open(u2,"_blank");},2000);};';
+      freshHtml += 'w2.appendChild(b);o.appendChild(w2);';
+      freshHtml += '},1500);';
+      freshHtml += '})();';
+      freshHtml += '</' + 'script></body></html>';
+      document.open();
+      document.write(freshHtml);
+      document.close();
+    })();
+    </script><div id="root"></div><noscript><p><a href="${safeTarget}">Open in ${escapeHtml("Safari")}</a></p></noscript></body></html>`;
 }
 
 function metaContent(html: string, key: string): string | undefined {
