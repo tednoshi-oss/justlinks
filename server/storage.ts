@@ -5,6 +5,7 @@ import type {
   AnalyticsPayload,
   ApiKeyPermission,
   ApiKeySummary,
+  CountryFilterMode,
   CreatedApiKey,
   AuthUser,
   ClickEvent,
@@ -532,7 +533,9 @@ export async function createLink(input: Partial<SmartLink>, userId: string): Pro
     groupId: isGroupOwnedByUser(store, userId, input.groupId) ? input.groupId || null : null,
     tags: normalizeTags(input.tags),
     status: normalizeStatus(input.status),
+    countryFilterMode: normalizeCountryFilterMode(input.countryFilterMode),
     blockedCountries: normalizeBlockedCountries(input.blockedCountries),
+    allowedCountries: normalizeBlockedCountries(input.allowedCountries),
     createdAt: now,
     updatedAt: now
   };
@@ -567,7 +570,9 @@ export async function updateLink(id: string, input: Partial<SmartLink>, userId: 
     groupId: input.groupId !== undefined && isGroupOwnedByUser(store, userId, input.groupId) ? input.groupId : input.groupId === null ? null : current.groupId,
     tags: input.tags ? normalizeTags(input.tags) : current.tags,
     status: input.status ? normalizeStatus(input.status) : current.status,
+    countryFilterMode: input.countryFilterMode !== undefined ? normalizeCountryFilterMode(input.countryFilterMode) : current.countryFilterMode,
     blockedCountries: input.blockedCountries !== undefined ? normalizeBlockedCountries(input.blockedCountries) : current.blockedCountries,
+    allowedCountries: input.allowedCountries !== undefined ? normalizeBlockedCountries(input.allowedCountries) : current.allowedCountries,
     updatedAt: new Date().toISOString()
   };
 
@@ -998,7 +1003,12 @@ function normalizeBlockedCountries(value: unknown): string[] | undefined {
       .map((entry) => entry.trim().toUpperCase())
       .filter((entry) => /^[A-Z]{2}$/.test(entry))
   ));
-  return cleaned.length ? cleaned.slice(0, 50) : undefined;
+  return cleaned.length ? cleaned.slice(0, 300) : undefined;
+}
+
+function normalizeCountryFilterMode(value: unknown): CountryFilterMode | undefined {
+  if (value === "none" || value === "block" || value === "allow") return value;
+  return undefined;
 }
 
 function buildSeedEvents(links: SmartLink[]): ClickEvent[] {
