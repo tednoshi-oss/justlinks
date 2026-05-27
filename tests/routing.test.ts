@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SmartLink } from "../shared/types.js";
-import { androidExternalBrowserIntent, deepLinkEscapeUrl, externalBrowserEscapeAttemptUrl, isEscapedBrowserRequest, isInAppBrowser, isLinkPreviewBot, parseHtmlMetadata, previewFetchUrl, renderDeepLinkEscapePage, renderLinkPreviewPage, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape } from "../shared/edge.js";
+import { androidExternalBrowserIntent, deepLinkEscapeUrl, externalBrowserEscapeAttemptUrl, isCountryBlocked, isEscapedBrowserRequest, isInAppBrowser, isLinkPreviewBot, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDeepLinkEscapePage, renderLinkPreviewPage, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape } from "../shared/edge.js";
 import { cleanSlug, detectDevice, selectDestination } from "../server/routing.js";
 
 const link: SmartLink = {
@@ -124,4 +124,28 @@ test("link preview helpers use rich destination metadata", () => {
   assert.match(html, /og:title/);
   assert.match(html, /Riley&#39;s Fanvue/);
   assert.match(html, /https:\/\/www\.fanvue\.com\/avatar\.png/);
+});
+
+test("country block matches normalized codes and renders a clean 451 page", () => {
+  assert.equal(normalizeCountryCode(" us "), "US");
+  assert.equal(normalizeCountryCode(null), "");
+
+  const link = { blockedCountries: ["RU", "CN", "IR"] };
+  assert.equal(isCountryBlocked(link, "RU"), true);
+  assert.equal(isCountryBlocked(link, "ru"), true);
+  assert.equal(isCountryBlocked(link, " CN "), true);
+  assert.equal(isCountryBlocked(link, "US"), false);
+  assert.equal(isCountryBlocked(link, ""), false);
+  assert.equal(isCountryBlocked(link, undefined), false);
+  assert.equal(isCountryBlocked({ blockedCountries: undefined }, "RU"), false);
+  assert.equal(isCountryBlocked({ blockedCountries: [] }, "RU"), false);
+
+  const html = renderCountryBlockedPage("RU");
+  assert.match(html, /Not available in your region/);
+  assert.match(html, /isn't available in RU/);
+  assert.match(html, /<title>Not available in your region<\/title>/);
+
+  const htmlWithInjection = renderCountryBlockedPage("<script>alert(1)</script>");
+  assert.doesNotMatch(htmlWithInjection, /<script>alert/);
+  assert.match(htmlWithInjection, /&lt;script&gt;/);
 });

@@ -5,13 +5,16 @@ import {
   detectDevice,
   type EdgeClickEvent,
   type EdgeLinkConfig,
+  isCountryBlocked,
   isLinkPreviewBot,
   isEscapedBrowserRequest,
   isHttpUrl,
   isMobileDevice,
   isDashboardPath,
+  normalizeCountryCode,
   parseHtmlMetadata,
   previewFetchUrl,
+  renderCountryBlockedPage,
   renderDeepLinkEscapePage,
   renderLinkPreviewPage,
   selectWebFallback,
@@ -94,6 +97,19 @@ export default {
 
     const link = await getEdgeLink(slug, env, context);
     if (!link || link.status !== "active") return notFound();
+
+    const country = normalizeCountryCode(request.headers.get("cf-ipcountry"));
+    if (isCountryBlocked(link, country)) {
+      return new Response(renderCountryBlockedPage(country), {
+        status: 451,
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Referrer-Policy": "strict-origin-when-cross-origin",
+          "X-Content-Type-Options": "nosniff"
+        }
+      });
+    }
 
     const device = detectDevice(userAgent, url.searchParams.get("target") || "");
     const webDestination = selectWebFallback(link);

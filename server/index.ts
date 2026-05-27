@@ -35,7 +35,7 @@ import {
 } from "./storage.js";
 import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
 import { classifyReferrer, cleanSlug, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
-import { deepLinkEscapeUrl, isEscapedBrowserRequest, isHttpUrl, isLinkPreviewBot, isMobileDevice, parseHtmlMetadata, previewFetchUrl, renderDeepLinkEscapePage, renderLinkPreviewPage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
+import { deepLinkEscapeUrl, isCountryBlocked, isEscapedBrowserRequest, isHttpUrl, isLinkPreviewBot, isMobileDevice, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDeepLinkEscapePage, renderLinkPreviewPage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
 import type { ApiKeyPermission, AuthUser, ClickEvent, SmartLink } from "../shared/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -474,6 +474,17 @@ async function redirectSlug(request: express.Request, response: express.Response
       return;
     }
 
+    const country = normalizeCountryCode(request.get("cf-ipcountry") || request.get("x-vercel-ip-country") || "");
+    if (isCountryBlocked(link, country)) {
+      response.set({
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.status(451).send(renderCountryBlockedPage(country));
+      return;
+    }
+
     const device = detectDevice(userAgent, String(request.query.target || ""));
     const browser = detectBrowser(userAgent);
     const webDestination = selectWebFallback(link);
@@ -486,7 +497,7 @@ async function redirectSlug(request: express.Request, response: express.Response
       occurredAt: new Date().toISOString(),
       device,
       browser,
-      country: String(request.get("cf-ipcountry") || request.get("x-vercel-ip-country") || "Unknown"),
+      country: country || "Unknown",
       referrer: classifyReferrer(request.get("referer")),
       visitorKey: hashVisitor(`${clientIp(request)}:${request.get("user-agent") || ""}`),
       destination

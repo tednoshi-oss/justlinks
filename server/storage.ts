@@ -532,6 +532,7 @@ export async function createLink(input: Partial<SmartLink>, userId: string): Pro
     groupId: isGroupOwnedByUser(store, userId, input.groupId) ? input.groupId || null : null,
     tags: normalizeTags(input.tags),
     status: normalizeStatus(input.status),
+    blockedCountries: normalizeBlockedCountries(input.blockedCountries),
     createdAt: now,
     updatedAt: now
   };
@@ -566,6 +567,7 @@ export async function updateLink(id: string, input: Partial<SmartLink>, userId: 
     groupId: input.groupId !== undefined && isGroupOwnedByUser(store, userId, input.groupId) ? input.groupId : input.groupId === null ? null : current.groupId,
     tags: input.tags ? normalizeTags(input.tags) : current.tags,
     status: input.status ? normalizeStatus(input.status) : current.status,
+    blockedCountries: input.blockedCountries !== undefined ? normalizeBlockedCountries(input.blockedCountries) : current.blockedCountries,
     updatedAt: new Date().toISOString()
   };
 
@@ -983,6 +985,20 @@ function normalizeTags(value: unknown): string[] {
 
 function normalizeStatus(value: unknown): LinkStatus {
   return value === "paused" ? "paused" : "active";
+}
+
+function normalizeBlockedCountries(value: unknown): string[] | undefined {
+  const raw = Array.isArray(value)
+    ? value.map(String)
+    : typeof value === "string"
+      ? value.split(/[,\s\n]+/)
+      : [];
+  const cleaned = Array.from(new Set(
+    raw
+      .map((entry) => entry.trim().toUpperCase())
+      .filter((entry) => /^[A-Z]{2}$/.test(entry))
+  ));
+  return cleaned.length ? cleaned.slice(0, 50) : undefined;
 }
 
 function buildSeedEvents(links: SmartLink[]): ClickEvent[] {
