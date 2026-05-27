@@ -1750,8 +1750,6 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
   const [shortCode, setShortCode] = useState(editLink?.slug || "");
   const [customCode, setCustomCode] = useState(Boolean(editLink));
   const [deepLink, setDeepLink] = useState(editLink ? isDeepLink(editLink) : false);
-  const [countryMode, setCountryMode] = useState<CountryFilterMode>(initialCountryMode(editLink));
-  const [filteredCodes, setFilteredCodes] = useState<string[]>(initialFilteredCodes(editLink));
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -1760,8 +1758,6 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
     setSaving(true);
     setFormError(null);
     const cleanedSlug = customCode && shortCode ? normalizeShortCode(shortCode, deepLink) : !isEdit ? randomCode(deepLink) : undefined;
-    const blocked = countryMode === "block" ? filteredCodes : [];
-    const allowed = countryMode === "allow" ? filteredCodes : [];
     try {
       await onSubmit({
         name: title,
@@ -1774,10 +1770,7 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
         deepLinkPath: "",
         tags: inferTags(notes, title),
         isDeepLink: deepLink,
-        forceExternalBrowser: deepLink,
-        countryFilterMode: countryMode,
-        blockedCountries: blocked,
-        allowedCountries: allowed
+        forceExternalBrowser: deepLink
       } as Partial<SmartLink>);
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Unable to save this link. Please try again.");
@@ -1838,13 +1831,6 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
           <span>Notes (optional)</span>
           <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={2} placeholder="Add some notes about this link..." />
         </label>
-
-        <CountryFilterField
-          mode={countryMode}
-          onModeChange={setCountryMode}
-          selectedCodes={filteredCodes}
-          onSelectedCodesChange={setFilteredCodes}
-        />
 
         <div className="settings-box">
           <p>Link Settings</p>
