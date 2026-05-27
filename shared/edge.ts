@@ -1,5 +1,7 @@
 import type { DeviceType, LinkStatus, SmartLink } from "./types.js";
 
+export type CountryFilterMode = "none" | "block" | "allow";
+
 export interface EdgeLinkConfig {
   id: string;
   name?: string;
@@ -12,7 +14,9 @@ export interface EdgeLinkConfig {
   fallbackUrl: string;
   isDeepLink?: boolean;
   forceExternalBrowser?: boolean;
+  countryFilterMode?: CountryFilterMode;
   blockedCountries?: string[];
+  allowedCountries?: string[];
 }
 
 export interface EdgeClickEvent {
@@ -52,7 +56,9 @@ export function toEdgeLink(link: SmartLink): EdgeLinkConfig {
     fallbackUrl: link.fallbackUrl,
     isDeepLink: Boolean(link.isDeepLink),
     forceExternalBrowser: Boolean(link.forceExternalBrowser),
-    blockedCountries: link.blockedCountries && link.blockedCountries.length ? link.blockedCountries : undefined
+    countryFilterMode: link.countryFilterMode,
+    blockedCountries: link.blockedCountries && link.blockedCountries.length ? link.blockedCountries : undefined,
+    allowedCountries: link.allowedCountries && link.allowedCountries.length ? link.allowedCountries : undefined
   };
 }
 
@@ -60,11 +66,31 @@ export function normalizeCountryCode(country: string | undefined | null): string
   return String(country || "").trim().toUpperCase();
 }
 
-export function isCountryBlocked(link: Pick<EdgeLinkConfig, "blockedCountries">, country: string | undefined | null): boolean {
+export function resolveCountryFilterMode(link: Pick<EdgeLinkConfig, "countryFilterMode" | "blockedCountries" | "allowedCountries">): CountryFilterMode {
+  if (link.countryFilterMode === "block" || link.countryFilterMode === "allow" || link.countryFilterMode === "none") return link.countryFilterMode;
+  if (link.allowedCountries && link.allowedCountries.length) return "allow";
+  if (link.blockedCountries && link.blockedCountries.length) return "block";
+  return "none";
+}
+
+export function isCountryBlocked(link: Pick<EdgeLinkConfig, "countryFilterMode" | "blockedCountries" | "allowedCountries">, country: string | undefined | null): boolean {
+  const mode = resolveCountryFilterMode(link);
+  if (mode === "none") return false;
   const code = normalizeCountryCode(country);
-  if (!code) return false;
-  if (!link.blockedCountries || link.blockedCountries.length === 0) return false;
-  return link.blockedCountries.some((blocked) => normalizeCountryCode(blocked) === code);
+
+  if (mode === "block") {
+    if (!link.blockedCountries || link.blockedCountries.length === 0) return false;
+    if (!code) return false;
+    return link.blockedCountries.some((blocked) => normalizeCountryCode(blocked) === code);
+  }
+
+  if (mode === "allow") {
+    if (!link.allowedCountries || link.allowedCountries.length === 0) return false;
+    if (!code) return true; // Unknown country fails an allow-only check
+    return !link.allowedCountries.some((allowed) => normalizeCountryCode(allowed) === code);
+  }
+
+  return false;
 }
 
 export function renderCountryBlockedPage(country: string): string {

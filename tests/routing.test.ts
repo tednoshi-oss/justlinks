@@ -126,25 +126,43 @@ test("link preview helpers use rich destination metadata", () => {
   assert.match(html, /https:\/\/www\.fanvue\.com\/avatar\.png/);
 });
 
-test("country block matches normalized codes and renders a clean 451 page", () => {
+test("country filter: block + allow modes, mode resolution, and backward compat", () => {
   assert.equal(normalizeCountryCode(" us "), "US");
   assert.equal(normalizeCountryCode(null), "");
 
-  const link = { blockedCountries: ["RU", "CN", "IR"] };
-  assert.equal(isCountryBlocked(link, "RU"), true);
-  assert.equal(isCountryBlocked(link, "ru"), true);
-  assert.equal(isCountryBlocked(link, " CN "), true);
-  assert.equal(isCountryBlocked(link, "US"), false);
-  assert.equal(isCountryBlocked(link, ""), false);
-  assert.equal(isCountryBlocked(link, undefined), false);
-  assert.equal(isCountryBlocked({ blockedCountries: undefined }, "RU"), false);
-  assert.equal(isCountryBlocked({ blockedCountries: [] }, "RU"), false);
+  // Legacy: only blockedCountries set, no explicit mode -> resolves to block
+  const legacyBlock = { blockedCountries: ["RU", "CN", "IR"] };
+  assert.equal(isCountryBlocked(legacyBlock, "RU"), true);
+  assert.equal(isCountryBlocked(legacyBlock, "ru"), true);
+  assert.equal(isCountryBlocked(legacyBlock, " CN "), true);
+  assert.equal(isCountryBlocked(legacyBlock, "US"), false);
+  assert.equal(isCountryBlocked(legacyBlock, ""), false);
+  assert.equal(isCountryBlocked(legacyBlock, undefined), false);
 
+  // Explicit "none" mode -> never blocked even if list has codes
+  assert.equal(isCountryBlocked({ countryFilterMode: "none", blockedCountries: ["RU"] }, "RU"), false);
+
+  // Explicit "block" mode
+  assert.equal(isCountryBlocked({ countryFilterMode: "block", blockedCountries: ["RU"] }, "RU"), true);
+  assert.equal(isCountryBlocked({ countryFilterMode: "block", blockedCountries: ["RU"] }, "US"), false);
+  assert.equal(isCountryBlocked({ countryFilterMode: "block", blockedCountries: [] }, "RU"), false);
+
+  // Explicit "allow" mode -> only listed countries pass through
+  const allowOnly = { countryFilterMode: "allow" as const, allowedCountries: ["US", "GB", "DE"] };
+  assert.equal(isCountryBlocked(allowOnly, "US"), false);
+  assert.equal(isCountryBlocked(allowOnly, "gb"), false);
+  assert.equal(isCountryBlocked(allowOnly, "RU"), true);
+  assert.equal(isCountryBlocked(allowOnly, "IN"), true);
+  // Empty allow list -> nothing blocked (don't accidentally block everyone)
+  assert.equal(isCountryBlocked({ countryFilterMode: "allow", allowedCountries: [] }, "US"), false);
+  // Unknown country fails an allow check
+  assert.equal(isCountryBlocked(allowOnly, ""), true);
+
+  // Blocked page renders + escapes injection
   const html = renderCountryBlockedPage("RU");
   assert.match(html, /Not available in your region/);
   assert.match(html, /isn't available in RU/);
   assert.match(html, /<title>Not available in your region<\/title>/);
-
   const htmlWithInjection = renderCountryBlockedPage("<script>alert(1)</script>");
   assert.doesNotMatch(htmlWithInjection, /<script>alert/);
   assert.match(htmlWithInjection, /&lt;script&gt;/);

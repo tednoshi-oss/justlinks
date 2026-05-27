@@ -3,6 +3,7 @@ export type LinkStatus = "active" | "paused";
 export type ApiKeyPermission = "create_links" | "create_deep_links" | "get_stats";
 export type UserRole = "owner" | "admin" | "member";
 export type UserStatus = "pending" | "approved" | "suspended";
+export type CountryFilterMode = "none" | "block" | "allow";
 
 export interface SmartLink {
   id: string;
@@ -21,7 +22,9 @@ export interface SmartLink {
   groupId?: string | null;
   tags: string[];
   status: LinkStatus;
+  countryFilterMode?: CountryFilterMode;
   blockedCountries?: string[];
+  allowedCountries?: string[];
   createdAt: string;
   updatedAt: string;
 }

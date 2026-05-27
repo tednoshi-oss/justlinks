@@ -2224,3 +2224,231 @@ textarea:focus {
     display: none;
   }
 }
+
+/* === Country filter (LinkModal) === */
+.country-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 4px 0 6px;
+}
+
+.country-filter .field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+  letter-spacing: 0.01em;
+}
+
+.country-filter .country-list-label {
+  margin-top: 4px;
+}
+
+.filter-mode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.filter-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-soft);
+  padding: 14px 16px;
+  color: var(--foreground);
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.filter-mode-option:hover {
+  border-color: rgb(255 255 255 / 0.18);
+}
+
+.filter-mode-option.active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, var(--card-soft));
+}
+
+.filter-mode-radio {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--primary);
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: transparent;
+}
+
+.filter-mode-option.active .filter-mode-radio::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.filter-mode-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.filter-mode-option.tone-danger .filter-mode-icon {
+  color: var(--destructive);
+}
+
+.filter-mode-option.tone-success .filter-mode-icon {
+  color: var(--success);
+}
+
+.filter-mode-option.tone-neutral .filter-mode-icon {
+  color: var(--muted-foreground);
+}
+
+.filter-mode-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.filter-mode-text strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.filter-mode-text small {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.country-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.country-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  transition: filter 0.12s;
+}
+
+.country-chip:hover {
+  filter: brightness(1.1);
+}
+
+.country-chip-row.tone-block .country-chip {
+  background: #dc2626;
+}
+
+.country-chip-row.tone-allow .country-chip {
+  background: #16a34a;
+}
+
+.country-chip svg {
+  opacity: 0.85;
+}
+
+.country-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--input);
+  padding: 0 12px;
+}
+
+.country-search svg {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.country-search input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  padding: 10px 8px;
+  outline: none;
+  font-size: 14px;
+}
+
+.country-search-clear {
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.country-search-clear:hover {
+  color: var(--foreground);
+  background: rgb(255 255 255 / 0.06);
+}
+
+.country-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-soft);
+  padding: 4px;
+}
+
+.country-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.country-list-item:hover {
+  background: rgb(255 255 255 / 0.05);
+}
+
+.country-list-item small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+.country-list-more {
+  margin: 8px 12px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+.country-empty {
+  margin: 0;
+}

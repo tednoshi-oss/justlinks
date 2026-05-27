@@ -1,13 +1,16 @@
 import {
   Activity,
   BarChart3,
+  Ban,
   BookOpen,
   Briefcase,
+  CheckCircle2,
   ChevronDown,
   Copy,
   Download,
   Edit3,
   Filter,
+  Globe,
   Info,
   KeyRound,
   LayoutDashboard,
@@ -28,7 +31,8 @@ import {
 } from "lucide-react";
 import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
-import type { AnalyticsPayload, ApiKeyPermission, ApiKeySummary, AuthUser, BreakdownPoint, ClickEvent, CreatedApiKey, DashboardSummary, LinkGroup, LinkWithStats, SmartLink, TeamMember, UserRole, UserStatus } from "../shared/types";
+import type { AnalyticsPayload, ApiKeyPermission, ApiKeySummary, AuthUser, BreakdownPoint, ClickEvent, CountryFilterMode, CreatedApiKey, DashboardSummary, LinkGroup, LinkWithStats, SmartLink, TeamMember, UserRole, UserStatus } from "../shared/types";
+import { countries, countryName, searchCountries } from "./countries";
 
 type View = "dashboard" | "links" | "analytics" | "api" | "team";
 type SortMode = "newest" | "oldest" | "most-clicks" | "least-clicks" | "name-asc" | "name-desc";
@@ -1533,6 +1537,125 @@ function LinkRow({
   );
 }
 
+const countryFilterModes: { value: CountryFilterMode; label: string; sub: string; icon: ReactNode; tone: string }[] = [
+  { value: "none", label: "No Filtering", sub: "Allow all countries", icon: <Globe size={18} aria-hidden="true" />, tone: "neutral" },
+  { value: "block", label: "Block Countries", sub: "Block selected countries from viewing", icon: <Ban size={18} aria-hidden="true" />, tone: "danger" },
+  { value: "allow", label: "Allow Only", sub: "Only allow selected countries to view", icon: <CheckCircle2 size={18} aria-hidden="true" />, tone: "success" }
+];
+
+function CountryFilterField({
+  mode,
+  onModeChange,
+  selectedCodes,
+  onSelectedCodesChange
+}: {
+  mode: CountryFilterMode;
+  onModeChange: (mode: CountryFilterMode) => void;
+  selectedCodes: string[];
+  onSelectedCodesChange: (codes: string[]) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const selectedSet = useMemo(() => new Set(selectedCodes.map((c) => c.toUpperCase())), [selectedCodes]);
+  const availableResults = useMemo(() => searchCountries(search, selectedSet), [search, selectedSet]);
+  const visibleResults = availableResults.slice(0, 60);
+  const listLabel = mode === "allow" ? "Countries to Allow" : "Countries to Block";
+
+  function addCode(code: string) {
+    const upper = code.toUpperCase();
+    if (selectedSet.has(upper)) return;
+    onSelectedCodesChange([...selectedCodes, upper]);
+  }
+
+  function removeCode(code: string) {
+    const upper = code.toUpperCase();
+    onSelectedCodesChange(selectedCodes.filter((c) => c.toUpperCase() !== upper));
+  }
+
+  return (
+    <div className="country-filter">
+      <div className="field-label">Filter Mode</div>
+      <div className="filter-mode-list" role="radiogroup" aria-label="Country filter mode">
+        {countryFilterModes.map((option) => {
+          const active = mode === option.value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              className={`filter-mode-option tone-${option.tone}${active ? " active" : ""}`}
+              onClick={() => onModeChange(option.value)}
+            >
+              <span className="filter-mode-radio" aria-hidden="true" />
+              <span className="filter-mode-icon" aria-hidden="true">{option.icon}</span>
+              <span className="filter-mode-text">
+                <strong>{option.label}</strong>
+                <small>{option.sub}</small>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {mode !== "none" ? (
+        <>
+          <div className="field-label country-list-label">{listLabel}</div>
+          {selectedCodes.length === 0 ? (
+            <p className="help-text country-empty">No countries selected yet. Use the list below to add some.</p>
+          ) : (
+            <div className={`country-chip-row tone-${mode}`}>
+              {selectedCodes.map((code) => (
+                <button key={code} type="button" className="country-chip" onClick={() => removeCode(code)} aria-label={`Remove ${countryName(code)}`}>
+                  <span>{countryName(code)}</span>
+                  <X size={13} aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="country-search">
+            <Search size={15} aria-hidden="true" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search countries..."
+              aria-label="Search countries"
+            />
+            {search ? (
+              <button type="button" className="country-search-clear" onClick={() => setSearch("")} aria-label="Clear search">
+                <X size={13} />
+              </button>
+            ) : null}
+          </div>
+
+          <div className="country-list" role="listbox" aria-label="Available countries">
+            {visibleResults.length === 0 ? (
+              <p className="help-text country-empty">No countries match your search.</p>
+            ) : (
+              visibleResults.map((country) => (
+                <button
+                  key={country.code}
+                  type="button"
+                  className="country-list-item"
+                  onClick={() => addCode(country.code)}
+                >
+                  <span>{country.name}</span>
+                  <small>{country.code}</small>
+                </button>
+              ))
+            )}
+            {availableResults.length > visibleResults.length ? (
+              <p className="country-list-more">+ {availableResults.length - visibleResults.length} more — refine your search</p>
+            ) : null}
+          </div>
+        </>
+      ) : (
+        <p className="help-text country-empty">Country filtering is off — every visitor follows the normal redirect.</p>
+      )}
+    </div>
+  );
+}
+
 function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | null; onClose: () => void; onSubmit: (payload: Partial<SmartLink>) => Promise<void> }) {
   const isEdit = Boolean(editLink);
   const [title, setTitle] = useState(editLink?.name || "");
@@ -1541,7 +1664,8 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
   const [shortCode, setShortCode] = useState(editLink?.slug || "");
   const [customCode, setCustomCode] = useState(Boolean(editLink));
   const [deepLink, setDeepLink] = useState(editLink ? isDeepLink(editLink) : false);
-  const [blockedCountriesText, setBlockedCountriesText] = useState((editLink?.blockedCountries || []).join(", "));
+  const [countryMode, setCountryMode] = useState<CountryFilterMode>(initialCountryMode(editLink));
+  const [filteredCodes, setFilteredCodes] = useState<string[]>(initialFilteredCodes(editLink));
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -1550,7 +1674,8 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
     setSaving(true);
     setFormError(null);
     const cleanedSlug = customCode && shortCode ? normalizeShortCode(shortCode, deepLink) : !isEdit ? randomCode(deepLink) : undefined;
-    const blockedCountries = parseBlockedCountriesInput(blockedCountriesText);
+    const blocked = countryMode === "block" ? filteredCodes : [];
+    const allowed = countryMode === "allow" ? filteredCodes : [];
     try {
       await onSubmit({
         name: title,
@@ -1564,7 +1689,9 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
         tags: inferTags(notes, title),
         isDeepLink: deepLink,
         forceExternalBrowser: deepLink,
-        blockedCountries
+        countryFilterMode: countryMode,
+        blockedCountries: blocked,
+        allowedCountries: allowed
       } as Partial<SmartLink>);
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Unable to save this link. Please try again.");
@@ -1626,11 +1753,12 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
           <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={2} placeholder="Add some notes about this link..." />
         </label>
 
-        <label className="field">
-          <span>Block by country (optional)</span>
-          <input value={blockedCountriesText} onChange={(event) => setBlockedCountriesText(event.target.value)} placeholder="RU, CN, IR" />
-          <small className="help-text">Comma-separated 2-letter country codes. Visitors from these countries see a "Not available" page instead of being redirected. Uses Cloudflare's <code>CF-IPCountry</code> header.</small>
-        </label>
+        <CountryFilterField
+          mode={countryMode}
+          onModeChange={setCountryMode}
+          selectedCodes={filteredCodes}
+          onSelectedCodesChange={setFilteredCodes}
+        />
 
         <div className="settings-box">
           <p>Link Settings</p>
@@ -1952,13 +2080,20 @@ function randomCode(deep = true): string {
   return deep ? `d-${code}` : code;
 }
 
-function parseBlockedCountriesInput(input: string): string[] {
-  const seen = new Set<string>();
-  for (const token of input.split(/[,\s\n]+/)) {
-    const cleaned = token.trim().toUpperCase();
-    if (/^[A-Z]{2}$/.test(cleaned)) seen.add(cleaned);
-  }
-  return Array.from(seen);
+function initialCountryMode(link: LinkWithStats | null): CountryFilterMode {
+  if (!link) return "none";
+  if (link.countryFilterMode === "block" || link.countryFilterMode === "allow" || link.countryFilterMode === "none") return link.countryFilterMode;
+  if (link.allowedCountries && link.allowedCountries.length) return "allow";
+  if (link.blockedCountries && link.blockedCountries.length) return "block";
+  return "none";
+}
+
+function initialFilteredCodes(link: LinkWithStats | null): string[] {
+  if (!link) return [];
+  const mode = initialCountryMode(link);
+  if (mode === "block") return [...(link.blockedCountries || [])];
+  if (mode === "allow") return [...(link.allowedCountries || [])];
+  return [];
 }
 
 function shortCode(slug: string): string {
