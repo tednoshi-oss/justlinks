@@ -12,6 +12,7 @@ export interface EdgeLinkConfig {
   fallbackUrl: string;
   isDeepLink?: boolean;
   forceExternalBrowser?: boolean;
+  blockedCountries?: string[];
 }
 
 export interface EdgeClickEvent {
@@ -50,8 +51,46 @@ export function toEdgeLink(link: SmartLink): EdgeLinkConfig {
     webUrl: link.webUrl,
     fallbackUrl: link.fallbackUrl,
     isDeepLink: Boolean(link.isDeepLink),
-    forceExternalBrowser: Boolean(link.forceExternalBrowser)
+    forceExternalBrowser: Boolean(link.forceExternalBrowser),
+    blockedCountries: link.blockedCountries && link.blockedCountries.length ? link.blockedCountries : undefined
   };
+}
+
+export function normalizeCountryCode(country: string | undefined | null): string {
+  return String(country || "").trim().toUpperCase();
+}
+
+export function isCountryBlocked(link: Pick<EdgeLinkConfig, "blockedCountries">, country: string | undefined | null): boolean {
+  const code = normalizeCountryCode(country);
+  if (!code) return false;
+  if (!link.blockedCountries || link.blockedCountries.length === 0) return false;
+  return link.blockedCountries.some((blocked) => normalizeCountryCode(blocked) === code);
+}
+
+export function renderCountryBlockedPage(country: string): string {
+  const safeCountry = escapeHtml(country || "your region");
+  return `<!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Not available in your region</title>
+      <style>
+        body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #09090b; color: #f2f2f3; }
+        main { width: min(420px, calc(100vw - 32px)); border: 1px solid #27272f; border-radius: 12px; background: #0f0f12; padding: 28px; text-align: center; }
+        h1 { margin: 0 0 8px; font-size: 22px; }
+        p { margin: 0; color: #8d8d98; line-height: 1.5; }
+        small { display: block; margin-top: 18px; color: #5f5f6c; font-size: 12px; }
+      </style>
+    </head>
+    <body>
+      <main>
+        <h1>Not available in your region</h1>
+        <p>This link isn't available in ${safeCountry}.</p>
+        <small>If you believe this is a mistake, contact the link owner.</small>
+      </main>
+    </body>
+  </html>`;
 }
 
 export function isDashboardPath(pathname: string): boolean {

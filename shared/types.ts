@@ -21,6 +21,7 @@ export interface SmartLink {
   groupId?: string | null;
   tags: string[];
   status: LinkStatus;
+  blockedCountries?: string[];
   createdAt: string;
   updatedAt: string;
 }

@@ -1541,6 +1541,7 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
   const [shortCode, setShortCode] = useState(editLink?.slug || "");
   const [customCode, setCustomCode] = useState(Boolean(editLink));
   const [deepLink, setDeepLink] = useState(editLink ? isDeepLink(editLink) : false);
+  const [blockedCountriesText, setBlockedCountriesText] = useState((editLink?.blockedCountries || []).join(", "));
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -1549,6 +1550,7 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
     setSaving(true);
     setFormError(null);
     const cleanedSlug = customCode && shortCode ? normalizeShortCode(shortCode, deepLink) : !isEdit ? randomCode(deepLink) : undefined;
+    const blockedCountries = parseBlockedCountriesInput(blockedCountriesText);
     try {
       await onSubmit({
         name: title,
@@ -1561,7 +1563,8 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
         deepLinkPath: "",
         tags: inferTags(notes, title),
         isDeepLink: deepLink,
-        forceExternalBrowser: deepLink
+        forceExternalBrowser: deepLink,
+        blockedCountries
       } as Partial<SmartLink>);
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Unable to save this link. Please try again.");
@@ -1621,6 +1624,12 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
         <label className="field">
           <span>Notes (optional)</span>
           <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={2} placeholder="Add some notes about this link..." />
+        </label>
+
+        <label className="field">
+          <span>Block by country (optional)</span>
+          <input value={blockedCountriesText} onChange={(event) => setBlockedCountriesText(event.target.value)} placeholder="RU, CN, IR" />
+          <small className="help-text">Comma-separated 2-letter country codes. Visitors from these countries see a "Not available" page instead of being redirected. Uses Cloudflare's <code>CF-IPCountry</code> header.</small>
         </label>
 
         <div className="settings-box">
@@ -1941,6 +1950,15 @@ function normalizeShortCode(value: string, deep: boolean): string {
 function randomCode(deep = true): string {
   const code = Math.random().toString(36).slice(2, 10);
   return deep ? `d-${code}` : code;
+}
+
+function parseBlockedCountriesInput(input: string): string[] {
+  const seen = new Set<string>();
+  for (const token of input.split(/[,\s\n]+/)) {
+    const cleaned = token.trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(cleaned)) seen.add(cleaned);
+  }
+  return Array.from(seen);
 }
 
 function shortCode(slug: string): string {
