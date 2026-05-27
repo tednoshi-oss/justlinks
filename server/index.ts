@@ -17,15 +17,18 @@ import {
   deleteGroup,
   deleteLink,
   deleteSession,
+  findGroupById,
   findLinkById,
   findLinkBySlug,
   getAnalytics,
   getPublicLinkStats,
   getSummary,
   getUserBySession,
+  listAllGroups,
   listApiKeys,
   listGroups,
   listLinks,
+  listLinksInGroup,
   listPublicApiLinks,
   listRawLinks,
   listTeamMembers,
@@ -35,7 +38,7 @@ import {
 } from "./storage.js";
 import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
 import { classifyReferrer, cleanSlug, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
-import { deepLinkEscapeUrl, isCountryBlocked, isEscapedBrowserRequest, isHttpUrl, isLinkPreviewBot, isMobileDevice, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDeepLinkEscapePage, renderLinkPreviewPage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
+import { deepLinkEscapeUrl, effectiveCountryFilter, isCountryBlocked, isEscapedBrowserRequest, isHttpUrl, isLinkPreviewBot, isMobileDevice, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDeepLinkEscapePage, renderLinkPreviewPage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
 import type { ApiKeyPermission, AuthUser, ClickEvent, SmartLink } from "../shared/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -100,7 +103,9 @@ app.get("/api/edge/links", async (request, response, next) => {
   if (!authorizeEdgeRequest(request, response)) return;
   try {
     const links = await listRawLinks();
-    response.json(links.map(toEdgeLink));
+    const groups = await listAllGroups();
+    const groupById = new Map(groups.map((group) => [group.id, group] as const));
+    response.json(links.map((link) => toEdgeLink(link, link.groupId ? groupById.get(link.groupId) || null : null)));
   } catch (error) {
     next(error);
   }
@@ -123,7 +128,7 @@ app.get("/api/edge/links/:slug", async (request, response, next) => {
 app.post("/api/edge/sync", async (request, response, next) => {
   if (!authorizeEdgeRequest(request, response)) return;
   try {
-    response.json(await syncLinksToEdge(await listRawLinks()));
+    response.json(await syncLinksToEdge(await listRawLinks(), await listAllGroups()));
   } catch (error) {
     next(error);
   }
@@ -193,7 +198,8 @@ app.post("/api/public/create-link", async (request, response, next) => {
       },
       context.userId
     );
-    await syncLinkToEdge(link).catch((error) => console.error("Failed to sync API link to edge", error));
+    const apiLinkGroup = link.groupId ? await findGroupById(link.groupId, context.userId) : null;
+    await syncLinkToEdge(link, apiLinkGroup ?? null).catch((error) => console.error("Failed to sync API link to edge", error));
     response.json({ link: publicApiLink(link) });
   } catch (error) {
     next(error);
@@ -247,7 +253,7 @@ app.post("/api/public/delete-link", async (request, response, next) => {
     const deleted = await deleteLink(linkId, context.userId);
     if (deleted) {
       await deleteLinkFromEdge(link.slug).catch((error) => console.error("Failed to delete API link from edge", error));
-      await syncLinksToEdge(await listRawLinks()).catch((error) => console.error("Failed to reconcile edge links", error));
+      await syncLinksToEdge(await listRawLinks(), await listAllGroups()).catch((error) => console.error("Failed to reconcile edge links", error));
     }
     response.json({ deleted });
   } catch (error) {
@@ -336,10 +342,22 @@ app.post("/api/groups", async (request, response, next) => {
 
 app.put("/api/groups/:id", async (request, response, next) => {
   try {
-    const updated = await updateGroup(request.params.id, request.body, currentUser(response).id);
+    const userId = currentUser(response).id;
+    const updated = await updateGroup(request.params.id, request.body, userId);
     if (!updated) {
       response.status(404).json({ error: "Group not found." });
       return;
+    }
+    // Re-sync all links in this group so the edge picks up the new effective filter.
+    if (
+      request.body?.countryFilterMode !== undefined ||
+      request.body?.blockedCountries !== undefined ||
+      request.body?.allowedCountries !== undefined
+    ) {
+      const memberLinks = await listLinksInGroup(updated.id, userId);
+      for (const link of memberLinks) {
+        await syncLinkToEdge(link, updated).catch((error) => console.error("Failed to cascade group filter to edge link", error));
+      }
     }
     response.json(updated);
   } catch (error) {
@@ -362,8 +380,10 @@ app.post("/api/links", async (request, response, next) => {
       response.status(400).json({ error: "Name and fallback URL are required." });
       return;
     }
-    const link = await createLink(request.body, currentUser(response).id);
-    await syncLinkToEdge(link).catch((error) => console.error("Failed to sync link to edge", error));
+    const userId = currentUser(response).id;
+    const link = await createLink(request.body, userId);
+    const linkGroup = link.groupId ? await findGroupById(link.groupId, userId) : null;
+    await syncLinkToEdge(link, linkGroup ?? null).catch((error) => console.error("Failed to sync link to edge", error));
     response.status(201).json(link);
   } catch (error) {
     next(error);
@@ -379,11 +399,12 @@ app.put("/api/links/:id", async (request, response, next) => {
       response.status(404).json({ error: "Link not found." });
       return;
     }
+    const linkGroup = updated.groupId ? await findGroupById(updated.groupId, userId) : null;
     if (previous && previous.slug !== updated.slug) {
       await deleteLinkFromEdge(previous.slug).catch((error) => console.error("Failed to delete old edge slug", error));
-      await syncLinkToEdge(updated).catch((error) => console.error("Failed to sync link to edge", error));
+      await syncLinkToEdge(updated, linkGroup ?? null).catch((error) => console.error("Failed to sync link to edge", error));
     } else {
-      await syncLinkToEdge(updated).catch((error) => console.error("Failed to sync link to edge", error));
+      await syncLinkToEdge(updated, linkGroup ?? null).catch((error) => console.error("Failed to sync link to edge", error));
     }
     response.json(updated);
   } catch (error) {
@@ -398,7 +419,7 @@ app.delete("/api/links/:id", async (request, response, next) => {
     const deleted = await deleteLink(request.params.id, userId);
     if (deleted && previous) {
       await deleteLinkFromEdge(previous.slug).catch((error) => console.error("Failed to delete edge link", error));
-      await syncLinksToEdge(await listRawLinks()).catch((error) => console.error("Failed to reconcile edge links", error));
+      await syncLinksToEdge(await listRawLinks(), await listAllGroups()).catch((error) => console.error("Failed to reconcile edge links", error));
     }
     response.status(deleted ? 204 : 404).end();
   } catch (error) {
@@ -475,7 +496,9 @@ async function redirectSlug(request: express.Request, response: express.Response
     }
 
     const country = normalizeCountryCode(request.get("cf-ipcountry") || request.get("x-vercel-ip-country") || "");
-    if (isCountryBlocked(link, country)) {
+    const linkGroup = link.groupId ? await findGroupById(link.groupId) : null;
+    const effectiveFilter = effectiveCountryFilter(link, linkGroup ?? null);
+    if (isCountryBlocked(effectiveFilter, country)) {
       response.set({
         "Cache-Control": "no-store",
         "Referrer-Policy": "strict-origin-when-cross-origin",
@@ -598,7 +621,7 @@ app.listen(port, "0.0.0.0", () => {
 async function warmEdgeCache(): Promise<void> {
   if (!isEdgeSyncConfigured()) return;
   try {
-    const result = await syncLinksToEdge(await listRawLinks());
+    const result = await syncLinksToEdge(await listRawLinks(), await listAllGroups());
     console.log(`Synced ${result.synced} links to Cloudflare edge.`);
   } catch (error) {
     console.error("Failed to sync links to edge on startup", error);

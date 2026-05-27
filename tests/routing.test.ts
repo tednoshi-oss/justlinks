@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SmartLink } from "../shared/types.js";
-import { androidExternalBrowserIntent, deepLinkEscapeUrl, externalBrowserEscapeAttemptUrl, isCountryBlocked, isEscapedBrowserRequest, isInAppBrowser, isLinkPreviewBot, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDeepLinkEscapePage, renderLinkPreviewPage, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape } from "../shared/edge.js";
+import { androidExternalBrowserIntent, deepLinkEscapeUrl, effectiveCountryFilter, externalBrowserEscapeAttemptUrl, isCountryBlocked, isEscapedBrowserRequest, isInAppBrowser, isLinkPreviewBot, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDeepLinkEscapePage, renderLinkPreviewPage, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape } from "../shared/edge.js";
 import { cleanSlug, detectDevice, selectDestination } from "../server/routing.js";
 
 const link: SmartLink = {
@@ -166,4 +166,50 @@ test("country filter: block + allow modes, mode resolution, and backward compat"
   const htmlWithInjection = renderCountryBlockedPage("<script>alert(1)</script>");
   assert.doesNotMatch(htmlWithInjection, /<script>alert/);
   assert.match(htmlWithInjection, /&lt;script&gt;/);
+});
+
+test("group country filter cascades to links when the link has no own filter", () => {
+  const groupBlock = { countryFilterMode: "block" as const, blockedCountries: ["RU", "CN"] };
+  const groupAllow = { countryFilterMode: "allow" as const, allowedCountries: ["US", "GB"] };
+  const linkNoFilter = { countryFilterMode: undefined, blockedCountries: undefined, allowedCountries: undefined };
+  const linkOwnBlock = { countryFilterMode: "block" as const, blockedCountries: ["DE"] };
+  const linkOwnAllow = { countryFilterMode: "allow" as const, allowedCountries: ["JP"] };
+  const linkExplicitNone = { countryFilterMode: "none" as const, blockedCountries: ["DE"] };
+
+  // Link with no filter inherits from group
+  const effective1 = effectiveCountryFilter(linkNoFilter, groupBlock);
+  assert.deepEqual(effective1.blockedCountries, ["RU", "CN"]);
+  assert.equal(isCountryBlocked(effective1, "RU"), true);
+  assert.equal(isCountryBlocked(effective1, "US"), false);
+
+  // Link with no filter inherits group allow-only
+  const effective2 = effectiveCountryFilter(linkNoFilter, groupAllow);
+  assert.equal(isCountryBlocked(effective2, "US"), false);
+  assert.equal(isCountryBlocked(effective2, "RU"), true);
+
+  // Link with its own block filter overrides group's
+  const effective3 = effectiveCountryFilter(linkOwnBlock, groupBlock);
+  assert.deepEqual(effective3.blockedCountries, ["DE"]);
+  assert.equal(isCountryBlocked(effective3, "DE"), true);
+  assert.equal(isCountryBlocked(effective3, "RU"), false); // not in link's list, group ignored
+
+  // Link with its own allow filter overrides group's block filter
+  const effective4 = effectiveCountryFilter(linkOwnAllow, groupBlock);
+  assert.equal(isCountryBlocked(effective4, "JP"), false);
+  assert.equal(isCountryBlocked(effective4, "US"), true); // not in link's allow list
+
+  // No group → fall back to link's own filter (or none)
+  const effective5 = effectiveCountryFilter(linkNoFilter, null);
+  assert.equal(isCountryBlocked(effective5, "US"), false);
+
+  // Explicit "none" on link falls back to group filter (same as no filter at all).
+  // To opt out of a group filter for one link, set the link's mode to "block"
+  // with an empty blockedCountries list — that wins and lets everyone through.
+  const effective6 = effectiveCountryFilter(linkExplicitNone, groupBlock);
+  assert.equal(isCountryBlocked(effective6, "RU"), true);
+  assert.equal(isCountryBlocked(effective6, "DE"), false);
+
+  const linkExplicitEmptyBlock = { countryFilterMode: "block" as const, blockedCountries: [] };
+  const effective7 = effectiveCountryFilter(linkExplicitEmptyBlock, groupBlock);
+  assert.equal(isCountryBlocked(effective7, "RU"), false); // link's empty list wins, no one blocked
 });

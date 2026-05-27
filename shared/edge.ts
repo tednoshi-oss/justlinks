@@ -1,4 +1,4 @@
-import type { DeviceType, LinkStatus, SmartLink } from "./types.js";
+import type { DeviceType, LinkGroup, LinkStatus, SmartLink } from "./types.js";
 
 export type CountryFilterMode = "none" | "block" | "allow";
 
@@ -43,7 +43,8 @@ export interface LinkPreviewMetadata {
 export const dashboardPathPrefixes = ["/dashboard", "/api", "/assets"] as const;
 export const dashboardExactPaths = ["/", "/favicon.png", "/favicon.svg", "/tapsocials-logo.svg", "/robots.txt", "/manifest.webmanifest"] as const;
 
-export function toEdgeLink(link: SmartLink): EdgeLinkConfig {
+export function toEdgeLink(link: SmartLink, group?: Pick<LinkGroup, "countryFilterMode" | "blockedCountries" | "allowedCountries"> | null): EdgeLinkConfig {
+  const filter = effectiveCountryFilter(link, group);
   return {
     id: link.id,
     name: link.name,
@@ -56,9 +57,9 @@ export function toEdgeLink(link: SmartLink): EdgeLinkConfig {
     fallbackUrl: link.fallbackUrl,
     isDeepLink: Boolean(link.isDeepLink),
     forceExternalBrowser: Boolean(link.forceExternalBrowser),
-    countryFilterMode: link.countryFilterMode,
-    blockedCountries: link.blockedCountries && link.blockedCountries.length ? link.blockedCountries : undefined,
-    allowedCountries: link.allowedCountries && link.allowedCountries.length ? link.allowedCountries : undefined
+    countryFilterMode: filter.countryFilterMode,
+    blockedCountries: filter.blockedCountries && filter.blockedCountries.length ? filter.blockedCountries : undefined,
+    allowedCountries: filter.allowedCountries && filter.allowedCountries.length ? filter.allowedCountries : undefined
   };
 }
 
@@ -71,6 +72,34 @@ export function resolveCountryFilterMode(link: Pick<EdgeLinkConfig, "countryFilt
   if (link.allowedCountries && link.allowedCountries.length) return "allow";
   if (link.blockedCountries && link.blockedCountries.length) return "block";
   return "none";
+}
+
+// Resolves the effective country filter for a link, falling back to its group's
+// filter when the link itself has no active filter. Used at sync time so the
+// worker just sees the final effective filter in KV.
+export function effectiveCountryFilter(
+  link: Pick<EdgeLinkConfig, "countryFilterMode" | "blockedCountries" | "allowedCountries">,
+  group?: Pick<EdgeLinkConfig, "countryFilterMode" | "blockedCountries" | "allowedCountries"> | null
+): Pick<EdgeLinkConfig, "countryFilterMode" | "blockedCountries" | "allowedCountries"> {
+  if (resolveCountryFilterMode(link) !== "none") {
+    return {
+      countryFilterMode: link.countryFilterMode,
+      blockedCountries: link.blockedCountries,
+      allowedCountries: link.allowedCountries
+    };
+  }
+  if (group && resolveCountryFilterMode(group) !== "none") {
+    return {
+      countryFilterMode: group.countryFilterMode,
+      blockedCountries: group.blockedCountries,
+      allowedCountries: group.allowedCountries
+    };
+  }
+  return {
+    countryFilterMode: undefined,
+    blockedCountries: undefined,
+    allowedCountries: undefined
+  };
 }
 
 export function isCountryBlocked(link: Pick<EdgeLinkConfig, "countryFilterMode" | "blockedCountries" | "allowedCountries">, country: string | undefined | null): boolean {

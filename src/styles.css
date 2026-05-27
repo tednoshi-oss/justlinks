@@ -2484,3 +2484,13 @@ textarea:focus {
   color: var(--muted-foreground);
   font-size: 13px;
 }
+
+.group-modal {
+  width: min(640px, calc(100vw - 32px));
+}
+
+.group-filter-hint {
+  margin: 4px 0 0;
+  color: var(--primary);
+  font-size: 12px;
+}

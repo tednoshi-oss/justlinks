@@ -240,14 +240,23 @@ export function App() {
     setGroupOpen(true);
   }
 
-  async function saveGroup(name: string, color: string) {
+  async function saveGroup(name: string, color: string, filter: { countryFilterMode: CountryFilterMode; blockedCountries: string[]; allowedCountries: string[] }) {
     const clean = name.trim();
     if (!clean) return;
+    const payload: Partial<LinkGroup> = {
+      name: clean,
+      color,
+      countryFilterMode: filter.countryFilterMode,
+      blockedCountries: filter.countryFilterMode === "block" ? filter.blockedCountries : [],
+      allowedCountries: filter.countryFilterMode === "allow" ? filter.allowedCountries : []
+    };
     if (editingGroup) {
-      const updated = await api.updateGroup(editingGroup.id, { name: clean, color });
+      const updated = await api.updateGroup(editingGroup.id, payload);
       setGroups((current) => current.map((group) => (group.id === updated.id ? updated : group)));
+      // Re-pull links so any cascaded filters are reflected in the dashboard immediately.
+      void refresh();
     } else {
-      const group = await api.createGroup({ name: clean, color });
+      const group = await api.createGroup(payload);
       setGroups((current) => [...current, group]);
     }
     closeGroupModal();
@@ -1381,9 +1390,11 @@ function GroupBar({
 
 const groupColors = ["#6366f1", "#8b5cf6", "#ec4899", "#ef4444", "#fb923c", "#facc15", "#22c55e", "#67e8f9"];
 
-function GroupModal({ editGroup, onClose, onSubmit }: { editGroup?: LinkGroup | null; onClose: () => void; onSubmit: (name: string, color: string) => Promise<void> }) {
+function GroupModal({ editGroup, onClose, onSubmit }: { editGroup?: LinkGroup | null; onClose: () => void; onSubmit: (name: string, color: string, filter: { countryFilterMode: CountryFilterMode; blockedCountries: string[]; allowedCountries: string[] }) => Promise<void> }) {
   const [name, setName] = useState(editGroup?.name || "");
   const [color, setColor] = useState(editGroup?.color || groupColors[0]);
+  const [countryMode, setCountryMode] = useState<CountryFilterMode>(initialGroupCountryMode(editGroup));
+  const [filteredCodes, setFilteredCodes] = useState<string[]>(initialGroupFilteredCodes(editGroup));
   const [saving, setSaving] = useState(false);
   const isEditing = Boolean(editGroup);
 
@@ -1391,7 +1402,11 @@ function GroupModal({ editGroup, onClose, onSubmit }: { editGroup?: LinkGroup | 
     event.preventDefault();
     setSaving(true);
     try {
-      await onSubmit(name, color);
+      await onSubmit(name, color, {
+        countryFilterMode: countryMode,
+        blockedCountries: countryMode === "block" ? filteredCodes : [],
+        allowedCountries: countryMode === "allow" ? filteredCodes : []
+      });
     } catch (error) {
       console.error(error);
       setSaving(false);
@@ -1423,6 +1438,15 @@ function GroupModal({ editGroup, onClose, onSubmit }: { editGroup?: LinkGroup | 
             />
           ))}
         </div>
+        <CountryFilterField
+          mode={countryMode}
+          onModeChange={setCountryMode}
+          selectedCodes={filteredCodes}
+          onSelectedCodesChange={setFilteredCodes}
+        />
+        {countryMode !== "none" ? (
+          <p className="help-text group-filter-hint">This filter applies to every link in this group — both existing and new ones.</p>
+        ) : null}
         <div className="modal-actions">
           <button className="button outline" type="button" onClick={onClose}>
             Cancel
@@ -2189,6 +2213,22 @@ function initialFilteredCodes(link: LinkWithStats | null): string[] {
   const mode = initialCountryMode(link);
   if (mode === "block") return [...(link.blockedCountries || [])];
   if (mode === "allow") return [...(link.allowedCountries || [])];
+  return [];
+}
+
+function initialGroupCountryMode(group: LinkGroup | null | undefined): CountryFilterMode {
+  if (!group) return "none";
+  if (group.countryFilterMode === "block" || group.countryFilterMode === "allow" || group.countryFilterMode === "none") return group.countryFilterMode;
+  if (group.allowedCountries && group.allowedCountries.length) return "allow";
+  if (group.blockedCountries && group.blockedCountries.length) return "block";
+  return "none";
+}
+
+function initialGroupFilteredCodes(group: LinkGroup | null | undefined): string[] {
+  if (!group) return [];
+  const mode = initialGroupCountryMode(group);
+  if (mode === "block") return [...(group.blockedCountries || [])];
+  if (mode === "allow") return [...(group.allowedCountries || [])];
   return [];
 }
 

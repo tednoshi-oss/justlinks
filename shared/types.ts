@@ -34,6 +34,9 @@ export interface LinkGroup {
   userId?: string;
   name: string;
   color: string;
+  countryFilterMode?: CountryFilterMode;
+  blockedCountries?: string[];
+  allowedCountries?: string[];
 }
 
 export interface ClickEvent {

@@ -469,7 +469,10 @@ export async function createGroup(input: Partial<LinkGroup>, userId: string): Pr
     id: uniqueGroupId(slugText(name), groupsForUser(store, userId)),
     userId,
     name,
-    color: String(input.color || "#6366f1")
+    color: String(input.color || "#6366f1"),
+    countryFilterMode: normalizeCountryFilterMode(input.countryFilterMode),
+    blockedCountries: normalizeBlockedCountries(input.blockedCountries),
+    allowedCountries: normalizeBlockedCountries(input.allowedCountries)
   };
   store.groups.push(group);
   await persistStore(store);
@@ -488,12 +491,32 @@ export async function updateGroup(id: string, input: Partial<LinkGroup>, userId:
   const updated: LinkGroup = {
     ...current,
     name,
-    color: typeof input.color === "string" && input.color.trim() ? input.color.trim() : current.color
+    color: typeof input.color === "string" && input.color.trim() ? input.color.trim() : current.color,
+    countryFilterMode: input.countryFilterMode !== undefined ? normalizeCountryFilterMode(input.countryFilterMode) : current.countryFilterMode,
+    blockedCountries: input.blockedCountries !== undefined ? normalizeBlockedCountries(input.blockedCountries) : current.blockedCountries,
+    allowedCountries: input.allowedCountries !== undefined ? normalizeBlockedCountries(input.allowedCountries) : current.allowedCountries
   };
 
   store.groups[index] = updated;
   await persistStore(store);
   return updated;
+}
+
+export async function findGroupById(id: string, userId?: string): Promise<LinkGroup | undefined> {
+  const store = await getStore();
+  return store.groups.find((group) => group.id === id && (!userId || group.userId === userId));
+}
+
+// Returns the IDs of all links that belong to the given group (used to re-sync to the edge when a group's filter changes).
+export async function listLinksInGroup(groupId: string, userId: string): Promise<SmartLink[]> {
+  const store = await getStore();
+  return store.links.filter((link) => link.userId === userId && link.groupId === groupId);
+}
+
+// Used by edge-sync flows to know each link's group for effective-filter resolution.
+export async function listAllGroups(): Promise<LinkGroup[]> {
+  const store = await getStore();
+  return store.groups;
 }
 
 export async function deleteGroup(id: string, userId: string): Promise<boolean> {
