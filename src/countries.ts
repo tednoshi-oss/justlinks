@@ -212,6 +212,8 @@ const codeToName = new Map(countries.map((c) => [c.code, c.name] as const));
 const nameToCode = new Map(countries.map((c) => [c.name.toLowerCase(), c.code] as const));
 
 export function countryName(code: string): string {
+  if (!code) return "Unknown";
+  if (!/^[A-Za-z]{2}$/.test(code)) return code;
   return codeToName.get(code.toUpperCase()) || code.toUpperCase();
 }
 

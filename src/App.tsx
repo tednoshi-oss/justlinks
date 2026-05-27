@@ -748,7 +748,7 @@ function AnalyticsView({ analytics, days, onDaysChange }: { analytics: Analytics
           <LineChart points={analytics.clicksOverTime} />
         </Panel>
         <Panel title="Top Regions">
-          <BreakdownList points={analytics.countryBreakdown} />
+          <BreakdownList points={localizeCountryBreakdown(analytics.countryBreakdown)} />
         </Panel>
       </div>
 
@@ -1921,7 +1921,7 @@ function StatsModal({ link, events, onClose }: { link: LinkWithStats; events: Cl
         </Panel>
         <div className="dashboard-grid">
           <Panel title="Top Regions">
-            <BreakdownList points={countries} />
+            <BreakdownList points={localizeCountryBreakdown(countries)} />
           </Panel>
           <Panel title="Devices">
             <BreakdownList points={devices} />
@@ -2270,6 +2270,10 @@ function breakdownFromEvents(labels: string[]): BreakdownPoint[] {
     .map(([label, value]) => ({ label, value, percentage: Math.round((value / total) * 100) }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 8);
+}
+
+function localizeCountryBreakdown(points: BreakdownPoint[]): BreakdownPoint[] {
+  return points.map((point) => ({ ...point, label: countryName(point.label) }));
 }
 
 function formatNumber(value: number): string {
