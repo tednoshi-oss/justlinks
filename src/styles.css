@@ -2494,3 +2494,13 @@ textarea:focus {
   color: var(--primary);
   font-size: 12px;
 }
+
+.inherit-banner {
+  background: rgb(34 211 238 / 0.08);
+  border: 1px solid rgb(34 211 238 / 0.32);
+  color: var(--foreground);
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+}

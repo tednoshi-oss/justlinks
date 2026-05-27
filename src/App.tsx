@@ -362,10 +362,12 @@ export function App() {
         />
       ) : null}
       {statsLink ? <StatsModal link={statsLink} events={analytics.recentEvents} onClose={() => setStatsLink(null)} /> : null}
-      {isGroupOpen ? <GroupModal editGroup={editingGroup} onClose={closeGroupModal} onSubmit={saveGroup} /> : null}
+      {isGroupOpen ? <GroupModal key={editingGroup?.id || "new"} editGroup={editingGroup} onClose={closeGroupModal} onSubmit={saveGroup} /> : null}
       {countryFilterLink ? (
         <CountryFilterModal
+          key={countryFilterLink.id}
           link={countryFilterLink}
+          group={countryFilterLink.groupId ? groups.find((group) => group.id === countryFilterLink.groupId) || null : null}
           onClose={() => setCountryFilterLink(null)}
           onSubmit={async (payload) => {
             const updated = await api.updateLink(countryFilterLink.id, payload);
@@ -1480,6 +1482,7 @@ function LinkRow({
   onRefresh: () => void;
 }) {
   const href = shortLinkUrl(link.slug);
+  const linkGroup = link.groupId ? groups.find((group) => group.id === link.groupId) || null : null;
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [menuOpen, setMenuOpen] = useState(false);
   const [groupMenuOpen, setGroupMenuOpen] = useState(false);
@@ -1571,7 +1574,7 @@ function LinkRow({
             <button type="button" aria-label={`Country filter for ${link.name}`} onClick={() => withClosedMenu(onCountryFilter)}>
               <Globe size={15} />
               Country Filter
-              {hasCountryFilter(link) ? <span className={`country-filter-badge tone-${countryFilterTone(link)}`}>{countryFilterCount(link)}</span> : null}
+              {hasCountryFilter(link, linkGroup) ? <span className={`country-filter-badge tone-${countryFilterTone(link, linkGroup)}`}>{countryFilterCount(link, linkGroup)}</span> : null}
             </button>
             <button type="button" className="danger" aria-label={`Delete from menu ${link.name}`} onClick={() => withClosedMenu(onDelete)}>
               <Trash2 size={15} />
@@ -1705,10 +1708,12 @@ function CountryFilterField({
 
 function CountryFilterModal({
   link,
+  group,
   onClose,
   onSubmit
 }: {
   link: LinkWithStats;
+  group?: LinkGroup | null;
   onClose: () => void;
   onSubmit: (payload: Partial<SmartLink>) => Promise<void>;
 }) {
@@ -1716,6 +1721,18 @@ function CountryFilterModal({
   const [codes, setCodes] = useState<string[]>(initialFilteredCodes(link));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Detect inheritance: link has no active filter of its own AND the group has one.
+  const linkHasOwnFilter = mode === "block" ? codes.length > 0 : mode === "allow" ? codes.length > 0 : false;
+  const groupHasFilter = !!group && (
+    (group.countryFilterMode === "block" && (group.blockedCountries?.length ?? 0) > 0) ||
+    (group.countryFilterMode === "allow" && (group.allowedCountries?.length ?? 0) > 0)
+  );
+  const inheriting = !linkHasOwnFilter && groupHasFilter;
+  const groupFilterCount = group?.countryFilterMode === "allow"
+    ? (group?.allowedCountries?.length || 0)
+    : (group?.blockedCountries?.length || 0);
+  const groupFilterLabel = group?.countryFilterMode === "allow" ? "Allow Only" : "Block";
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -1745,6 +1762,12 @@ function CountryFilterModal({
             <X size={18} />
           </button>
         </div>
+
+        {inheriting && group ? (
+          <div className="notice inherit-banner">
+            Currently inheriting <strong>{groupFilterLabel} ({groupFilterCount} {groupFilterCount === 1 ? "country" : "countries"})</strong> from group <strong>{group.name}</strong>. Saving here creates a link-specific override.
+          </div>
+        ) : null}
 
         <CountryFilterField
           mode={mode}
@@ -2176,28 +2199,51 @@ function randomCode(deep = true): string {
   return deep ? `d-${code}` : code;
 }
 
-function hasCountryFilter(link: LinkWithStats | SmartLink): boolean {
-  const mode = (link as SmartLink).countryFilterMode;
-  if (mode === "block" && link.blockedCountries && link.blockedCountries.length) return true;
-  if (mode === "allow" && link.allowedCountries && link.allowedCountries.length) return true;
-  if (!mode) {
-    if (link.allowedCountries && link.allowedCountries.length) return true;
-    if (link.blockedCountries && link.blockedCountries.length) return true;
+function effectiveLinkFilter(link: LinkWithStats | SmartLink, group?: LinkGroup | null): { mode: CountryFilterMode; tone: "block" | "allow"; count: number; inherited: boolean } {
+  // Mirror the server's effectiveCountryFilter resolution on the client so the
+  // row badge reflects what's actually being enforced (including group cascade).
+  const linkMode = (link as SmartLink).countryFilterMode;
+  const linkHasOwn =
+    (linkMode === "block" && (link.blockedCountries?.length ?? 0) > 0) ||
+    (linkMode === "allow" && (link.allowedCountries?.length ?? 0) > 0) ||
+    (!linkMode && ((link.blockedCountries?.length ?? 0) > 0 || (link.allowedCountries?.length ?? 0) > 0));
+
+  if (linkHasOwn) {
+    const inferred: CountryFilterMode = linkMode === "block" || linkMode === "allow"
+      ? linkMode
+      : (link.allowedCountries?.length ? "allow" : "block");
+    const count = inferred === "allow" ? link.allowedCountries?.length || 0 : link.blockedCountries?.length || 0;
+    return { mode: inferred, tone: inferred, count, inherited: false };
   }
-  return false;
+
+  if (group) {
+    const groupMode = group.countryFilterMode;
+    const groupHas =
+      (groupMode === "block" && (group.blockedCountries?.length ?? 0) > 0) ||
+      (groupMode === "allow" && (group.allowedCountries?.length ?? 0) > 0) ||
+      (!groupMode && ((group.blockedCountries?.length ?? 0) > 0 || (group.allowedCountries?.length ?? 0) > 0));
+    if (groupHas) {
+      const inferred: CountryFilterMode = groupMode === "block" || groupMode === "allow"
+        ? groupMode
+        : (group.allowedCountries?.length ? "allow" : "block");
+      const count = inferred === "allow" ? group.allowedCountries?.length || 0 : group.blockedCountries?.length || 0;
+      return { mode: inferred, tone: inferred, count, inherited: true };
+    }
+  }
+
+  return { mode: "none", tone: "block", count: 0, inherited: false };
 }
 
-function countryFilterTone(link: LinkWithStats | SmartLink): "block" | "allow" {
-  const mode = (link as SmartLink).countryFilterMode;
-  if (mode === "allow") return "allow";
-  if (mode === "block") return "block";
-  if (link.allowedCountries && link.allowedCountries.length) return "allow";
-  return "block";
+function hasCountryFilter(link: LinkWithStats | SmartLink, group?: LinkGroup | null): boolean {
+  return effectiveLinkFilter(link, group).mode !== "none";
 }
 
-function countryFilterCount(link: LinkWithStats | SmartLink): number {
-  if (countryFilterTone(link) === "allow") return link.allowedCountries?.length || 0;
-  return link.blockedCountries?.length || 0;
+function countryFilterTone(link: LinkWithStats | SmartLink, group?: LinkGroup | null): "block" | "allow" {
+  return effectiveLinkFilter(link, group).tone;
+}
+
+function countryFilterCount(link: LinkWithStats | SmartLink, group?: LinkGroup | null): number {
+  return effectiveLinkFilter(link, group).count;
 }
 
 function initialCountryMode(link: LinkWithStats | null): CountryFilterMode {

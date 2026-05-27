@@ -119,7 +119,8 @@ app.get("/api/edge/links/:slug", async (request, response, next) => {
       response.status(404).json({ error: "Link not found." });
       return;
     }
-    response.json(toEdgeLink(link));
+    const linkGroup = link.groupId ? await findGroupById(link.groupId, link.userId) : null;
+    response.json(toEdgeLink(link, linkGroup ?? null));
   } catch (error) {
     next(error);
   }
