@@ -78,6 +78,7 @@ export function App() {
   const [editingGroup, setEditingGroup] = useState<LinkGroup | null>(null);
   const [editingLink, setEditingLink] = useState<LinkWithStats | null>(null);
   const [statsLink, setStatsLink] = useState<LinkWithStats | null>(null);
+  const [countryFilterLink, setCountryFilterLink] = useState<LinkWithStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -330,6 +331,7 @@ export function App() {
                 onDelete={(link) => void removeLink(link)}
                 onAssignGroup={(link, groupId) => void assignGroup(link, groupId)}
                 onStats={setStatsLink}
+                onCountryFilter={setCountryFilterLink}
                 onRefresh={() => void refresh()}
               />
             ) : null}
@@ -352,6 +354,17 @@ export function App() {
       ) : null}
       {statsLink ? <StatsModal link={statsLink} events={analytics.recentEvents} onClose={() => setStatsLink(null)} /> : null}
       {isGroupOpen ? <GroupModal editGroup={editingGroup} onClose={closeGroupModal} onSubmit={saveGroup} /> : null}
+      {countryFilterLink ? (
+        <CountryFilterModal
+          link={countryFilterLink}
+          onClose={() => setCountryFilterLink(null)}
+          onSubmit={async (payload) => {
+            const updated = await api.updateLink(countryFilterLink.id, payload);
+            setLinks((current) => current.map((l) => (l.id === updated.id ? updated : l)));
+            setCountryFilterLink(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -622,6 +635,7 @@ function LinksView({
   onDelete,
   onAssignGroup,
   onStats,
+  onCountryFilter,
   onRefresh
 }: {
   links: LinkWithStats[];
@@ -641,6 +655,7 @@ function LinksView({
   onDelete: (link: LinkWithStats) => void;
   onAssignGroup: (link: LinkWithStats, groupId: string | null) => void;
   onStats: (link: LinkWithStats) => void;
+  onCountryFilter: (link: LinkWithStats) => void;
   onRefresh: () => void;
 }) {
   const normalCount = allLinks.filter((link) => !isDeepLink(link)).length;
@@ -690,6 +705,7 @@ function LinksView({
                 onDelete={() => onDelete(link)}
                 onAssignGroup={(groupId) => onAssignGroup(link, groupId)}
                 onStats={() => onStats(link)}
+                onCountryFilter={() => onCountryFilter(link)}
                 onRefresh={onRefresh}
               />
             ))
@@ -1427,6 +1443,7 @@ function LinkRow({
   onDelete,
   onAssignGroup,
   onStats,
+  onCountryFilter,
   onRefresh
 }: {
   link: LinkWithStats;
@@ -1435,6 +1452,7 @@ function LinkRow({
   onDelete: () => void;
   onAssignGroup: (groupId: string | null) => void;
   onStats: () => void;
+  onCountryFilter: () => void;
   onRefresh: () => void;
 }) {
   const href = shortLinkUrl(link.slug);
@@ -1526,6 +1544,11 @@ function LinkRow({
                 ))}
               </div>
             ) : null}
+            <button type="button" aria-label={`Country filter for ${link.name}`} onClick={() => withClosedMenu(onCountryFilter)}>
+              <Globe size={15} />
+              Country Filter
+              {hasCountryFilter(link) ? <span className={`country-filter-badge tone-${countryFilterTone(link)}`}>{countryFilterCount(link)}</span> : null}
+            </button>
             <button type="button" className="danger" aria-label={`Delete from menu ${link.name}`} onClick={() => withClosedMenu(onDelete)}>
               <Trash2 size={15} />
               Delete
@@ -1652,6 +1675,69 @@ function CountryFilterField({
       ) : (
         <p className="help-text country-empty">Country filtering is off — every visitor follows the normal redirect.</p>
       )}
+    </div>
+  );
+}
+
+function CountryFilterModal({
+  link,
+  onClose,
+  onSubmit
+}: {
+  link: LinkWithStats;
+  onClose: () => void;
+  onSubmit: (payload: Partial<SmartLink>) => Promise<void>;
+}) {
+  const [mode, setMode] = useState<CountryFilterMode>(initialCountryMode(link));
+  const [codes, setCodes] = useState<string[]>(initialFilteredCodes(link));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      await onSubmit({
+        countryFilterMode: mode,
+        blockedCountries: mode === "block" ? codes : [],
+        allowedCountries: mode === "allow" ? codes : []
+      });
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to save filter. Please try again.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form className="modal country-filter-modal" onSubmit={(event) => void save(event)}>
+        <div className="modal-header">
+          <div>
+            <h2>Country Filter</h2>
+            <p className="modal-subtitle">{link.name}</p>
+          </div>
+          <button className="icon-button ghost" type="button" title="Close" aria-label="Close" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <CountryFilterField
+          mode={mode}
+          onModeChange={setMode}
+          selectedCodes={codes}
+          onSelectedCodesChange={setCodes}
+        />
+
+        {error ? <div className="notice error modal-error">{error}</div> : null}
+
+        <div className="modal-actions">
+          <button className="button outline" type="button" onClick={onClose}>Cancel</button>
+          <button className="button primary" type="submit" disabled={saving}>
+            {saving ? "Saving..." : "Save Filter"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -2078,6 +2164,30 @@ function normalizeShortCode(value: string, deep: boolean): string {
 function randomCode(deep = true): string {
   const code = Math.random().toString(36).slice(2, 10);
   return deep ? `d-${code}` : code;
+}
+
+function hasCountryFilter(link: LinkWithStats | SmartLink): boolean {
+  const mode = (link as SmartLink).countryFilterMode;
+  if (mode === "block" && link.blockedCountries && link.blockedCountries.length) return true;
+  if (mode === "allow" && link.allowedCountries && link.allowedCountries.length) return true;
+  if (!mode) {
+    if (link.allowedCountries && link.allowedCountries.length) return true;
+    if (link.blockedCountries && link.blockedCountries.length) return true;
+  }
+  return false;
+}
+
+function countryFilterTone(link: LinkWithStats | SmartLink): "block" | "allow" {
+  const mode = (link as SmartLink).countryFilterMode;
+  if (mode === "allow") return "allow";
+  if (mode === "block") return "block";
+  if (link.allowedCountries && link.allowedCountries.length) return "allow";
+  return "block";
+}
+
+function countryFilterCount(link: LinkWithStats | SmartLink): number {
+  if (countryFilterTone(link) === "allow") return link.allowedCountries?.length || 0;
+  return link.blockedCountries?.length || 0;
 }
 
 function initialCountryMode(link: LinkWithStats | null): CountryFilterMode {

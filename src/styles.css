@@ -2452,3 +2452,35 @@ textarea:focus {
 .country-empty {
   margin: 0;
 }
+
+.country-filter-badge {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  border-radius: 9999px;
+}
+
+.country-filter-badge.tone-block {
+  background: #dc2626;
+}
+
+.country-filter-badge.tone-allow {
+  background: #16a34a;
+}
+
+.country-filter-modal {
+  width: min(640px, calc(100vw - 32px));
+}
+
+.modal-subtitle {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
