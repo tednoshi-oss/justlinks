@@ -285,6 +285,47 @@ code,
   width: 100%;
 }
 
+.auth-heading {
+  margin: 0 0 16px;
+  font-size: 20px;
+}
+
+.auth-hint {
+  margin: 0 0 16px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.auth-link {
+  display: inline-block;
+  margin: 0 0 14px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--primary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-link:hover {
+  text-decoration: underline;
+}
+
+.auth-back {
+  width: 100%;
+  margin: 12px 0 0;
+  text-align: center;
+  color: var(--muted-foreground);
+}
+
+.notice.auth-info {
+  margin: 0 0 14px;
+  border-color: rgb(34 211 238 / 0.35);
+  background: rgb(34 211 238 / 0.1);
+  color: #a5f3fc;
+}
+
 .pending-card {
   display: grid;
   gap: 16px;

@@ -23,6 +23,8 @@ import { cleanSlug } from "./routing.js";
 
 interface StoredUser extends AuthUser {
   passwordHash: string;
+  resetTokenHash?: string;
+  resetTokenExpiresAt?: string;
 }
 
 interface AuthSession {
@@ -419,6 +421,41 @@ export async function authenticateUser(emailInput: string | undefined, passwordI
   const email = normalizeEmail(emailInput);
   const user = store.users.find((entry) => entry.email === email);
   if (!user || !verifyPassword(String(passwordInput || ""), user.passwordHash)) return null;
+  return publicUser(user);
+}
+
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
+
+export async function createPasswordResetToken(emailInput: string | undefined): Promise<{ user: AuthUser; token: string } | null> {
+  const store = await getStore();
+  const email = normalizeEmail(emailInput);
+  const user = store.users.find((entry) => entry.email === email);
+  if (!user) return null;
+  const token = crypto.randomBytes(32).toString("base64url");
+  user.resetTokenHash = hashResetToken(token);
+  user.resetTokenExpiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS).toISOString();
+  await persistStore(store);
+  return { user: publicUser(user), token };
+}
+
+export async function resetPasswordWithToken(token: string | undefined, newPassword: string | undefined): Promise<AuthUser> {
+  const trimmedToken = String(token || "").trim();
+  const password = String(newPassword || "");
+  if (!trimmedToken) throw new Error("This reset link is invalid or has expired.");
+  if (password.length < 6) throw new Error("Password must be at least 6 characters.");
+
+  const store = await getStore();
+  const tokenHash = hashResetToken(trimmedToken);
+  const user = store.users.find((entry) => entry.resetTokenHash === tokenHash);
+  if (!user || !user.resetTokenExpiresAt || new Date(user.resetTokenExpiresAt).getTime() <= Date.now()) {
+    throw new Error("This reset link is invalid or has expired.");
+  }
+
+  user.passwordHash = hashPassword(password);
+  delete user.resetTokenHash;
+  delete user.resetTokenExpiresAt;
+  store.sessions = store.sessions.filter((session) => session.userId !== user.id);
+  await persistStore(store);
   return publicUser(user);
 }
 
@@ -855,6 +892,10 @@ function verifyPassword(password: string, storedHash: string): boolean {
 
 function hashSessionId(sessionId: string): string {
   return crypto.createHash("sha256").update(sessionId).digest("base64url");
+}
+
+function hashResetToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("base64url");
 }
 
 function hashApiKey(secret: string): string {

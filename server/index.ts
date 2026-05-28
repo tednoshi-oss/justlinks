@@ -11,6 +11,7 @@ import {
   createApiKey,
   createGroup,
   createLink,
+  createPasswordResetToken,
   createSession,
   createUserAccount,
   deleteApiKey,
@@ -32,10 +33,12 @@ import {
   listPublicApiLinks,
   listRawLinks,
   listTeamMembers,
+  resetPasswordWithToken,
   updateGroup,
   updateLink,
   updateTeamMember
 } from "./storage.js";
+import { sendPasswordResetEmail } from "./email.js";
 import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
 import { classifyReferrer, cleanSlug, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
 import { deepLinkEscapeUrl, effectiveCountryFilter, isCountryBlocked, isEscapedBrowserRequest, isHttpUrl, isLinkPreviewBot, isMobileDevice, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDeepLinkEscapePage, renderLinkPreviewPage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
@@ -96,6 +99,29 @@ app.post("/api/auth/logout", async (request, response, next) => {
     response.status(204).end();
   } catch (error) {
     next(error);
+  }
+});
+
+app.post("/api/auth/forgot-password", async (request, response) => {
+  const genericMessage = "If an account exists for that email, a password reset link is on its way.";
+  try {
+    const reset = await createPasswordResetToken(request.body?.email);
+    if (reset) {
+      const resetUrl = `${appBaseUrl(request)}/?reset=${encodeURIComponent(reset.token)}`;
+      await sendPasswordResetEmail(reset.user.email, resetUrl);
+    }
+  } catch (error) {
+    console.error("Failed to send password reset email", error);
+  }
+  response.json({ ok: true, message: genericMessage });
+});
+
+app.post("/api/auth/reset-password", async (request, response) => {
+  try {
+    const user = await resetPasswordWithToken(request.body?.token, request.body?.password);
+    response.json({ ok: true, user });
+  } catch (error) {
+    response.status(400).json({ error: error instanceof Error ? error.message : "Unable to reset password." });
   }
 });
 
@@ -707,6 +733,13 @@ function requireAdmin(response: express.Response): AuthUser | null {
 function readSessionCookie(request: Request): string | undefined {
   const cookies = parseCookies(request.get("cookie") || "");
   return cookies.ts_session;
+}
+
+function appBaseUrl(request: Request): string {
+  if (process.env.APP_BASE_URL) return process.env.APP_BASE_URL.replace(/\/+$/, "");
+  const proto = request.get("x-forwarded-proto") || (isSecureRequest(request) ? "https" : "http");
+  const host = request.get("x-forwarded-host") || request.get("host");
+  return host ? `${proto}://${host}` : "https://tapsocials.com";
 }
 
 function setSessionCookie(request: Request, response: express.Response, sessionId: string): void {

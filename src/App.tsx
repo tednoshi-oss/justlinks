@@ -63,6 +63,7 @@ export function App() {
   const [view, setView] = useState<View>(() => currentView());
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const resetToken = useMemo(() => new URLSearchParams(window.location.search).get("reset"), []);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [links, setLinks] = useState<LinkWithStats[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsPayload>(blankAnalytics);
@@ -294,6 +295,10 @@ export function App() {
     return result;
   }, [groupFilter, groups, links, query, sortMode]);
 
+  if (resetToken) {
+    return <AuthScreen onAuthenticated={(user) => void handleAuth(user)} error={null} resetToken={resetToken} />;
+  }
+
   if (authLoading) return <Skeleton />;
 
   if (!authUser) {
@@ -380,19 +385,49 @@ export function App() {
   );
 }
 
-function AuthScreen({ onAuthenticated, error }: { onAuthenticated: (user: AuthUser) => void; error: string | null }) {
-  const [mode, setMode] = useState<"login" | "signup">("signup");
+type AuthMode = "login" | "signup" | "forgot" | "reset";
+
+function clearResetParam() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("reset");
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function AuthScreen({ onAuthenticated, error, resetToken }: { onAuthenticated: (user: AuthUser) => void; error: string | null; resetToken?: string | null }) {
+  const [mode, setMode] = useState<AuthMode>(resetToken ? "reset" : "signup");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState<string | null>(error);
+  const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  function switchMode(next: AuthMode) {
+    setMode(next);
+    setAuthError(null);
+    setNotice(null);
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setSaving(true);
     setAuthError(null);
     try {
+      if (mode === "forgot") {
+        const result = await api.forgotPassword({ email });
+        setNotice(result.message);
+        setSaving(false);
+        return;
+      }
+      if (mode === "reset") {
+        await api.resetPassword({ token: resetToken || "", password });
+        clearResetParam();
+        setPassword("");
+        setNotice("Your password has been reset. Log in with your new password.");
+        setMode("login");
+        setSaving(false);
+        return;
+      }
       const user = mode === "signup" ? await api.signup({ name, email, password }) : await api.login({ email, password });
       onAuthenticated(user);
     } catch (requestError) {
@@ -401,18 +436,36 @@ function AuthScreen({ onAuthenticated, error }: { onAuthenticated: (user: AuthUs
     }
   }
 
+  const isReset = mode === "reset";
+  const isForgot = mode === "forgot";
+  const submitLabel = saving
+    ? "Please wait..."
+    : mode === "signup"
+      ? "Create Account"
+      : mode === "login"
+        ? "Log In"
+        : mode === "forgot"
+          ? "Send reset link"
+          : "Reset password";
+
   return (
     <main className="auth-shell">
       <form className="auth-card" onSubmit={(event) => void submit(event)}>
         <Brand />
-        <div className="auth-tabs">
-          <button type="button" className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")}>
-            Sign up
-          </button>
-          <button type="button" className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>
-            Log in
-          </button>
-        </div>
+        {isReset || isForgot ? (
+          <h1 className="auth-heading">{isReset ? "Choose a new password" : "Reset your password"}</h1>
+        ) : (
+          <div className="auth-tabs">
+            <button type="button" className={mode === "signup" ? "active" : ""} onClick={() => switchMode("signup")}>
+              Sign up
+            </button>
+            <button type="button" className={mode === "login" ? "active" : ""} onClick={() => switchMode("login")}>
+              Log in
+            </button>
+          </div>
+        )}
+
+        {isForgot ? <p className="auth-hint">Enter your account email and we&apos;ll send you a link to reset your password.</p> : null}
 
         {mode === "signup" ? (
           <label className="field">
@@ -424,24 +477,41 @@ function AuthScreen({ onAuthenticated, error }: { onAuthenticated: (user: AuthUs
           </label>
         ) : null}
 
-        <label className="field">
-          <span>Email</span>
-          <div className="input-with-icon">
-            <Mail size={16} />
-            <input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" autoComplete="email" />
-          </div>
-        </label>
+        {!isReset ? (
+          <label className="field">
+            <span>Email</span>
+            <div className="input-with-icon">
+              <Mail size={16} />
+              <input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" autoComplete="email" />
+            </div>
+          </label>
+        ) : null}
 
-        <label className="field">
-          <span>Password</span>
-          <input required minLength={6} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 6 characters" autoComplete={mode === "signup" ? "new-password" : "current-password"} />
-        </label>
+        {!isForgot ? (
+          <label className="field">
+            <span>{isReset ? "New password" : "Password"}</span>
+            <input required minLength={6} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 6 characters" autoComplete={mode === "login" ? "current-password" : "new-password"} />
+          </label>
+        ) : null}
 
+        {mode === "login" ? (
+          <button type="button" className="auth-link" onClick={() => switchMode("forgot")}>
+            Forgot password?
+          </button>
+        ) : null}
+
+        {notice ? <div className="notice auth-info">{notice}</div> : null}
         {authError ? <div className="notice error auth-error">{authError}</div> : null}
 
         <button className="button primary auth-submit" type="submit" disabled={saving}>
-          {saving ? "Please wait..." : mode === "signup" ? "Create Account" : "Log In"}
+          {submitLabel}
         </button>
+
+        {isForgot || isReset ? (
+          <button type="button" className="auth-link auth-back" onClick={() => switchMode("login")}>
+            Back to log in
+          </button>
+        ) : null}
       </form>
     </main>
   );

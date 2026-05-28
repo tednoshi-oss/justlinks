@@ -53,6 +53,18 @@ export const api = {
       throw new Error(`Logout failed: ${response.status}`);
     }
   },
+  forgotPassword: (payload: { email: string }) =>
+    requestJson<{ ok: boolean; message: string }>("/api/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  resetPassword: async (payload: { token: string; password: string }) => {
+    const data = await requestJson<{ ok: boolean; user: AuthUser }>("/api/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    return data.user;
+  },
   teamMembers: () => requestJson<TeamMember[]>("/api/team"),
   updateTeamMember: (id: string, payload: { status?: UserStatus; role?: UserRole }) =>
     requestJson<TeamMember>(`/api/team/${id}`, {
