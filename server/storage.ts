@@ -37,6 +37,14 @@ interface StoredApiKey extends ApiKeySummary {
   keyHash: string;
 }
 
+interface PasswordReset {
+  tokenHash: string;
+  userId: string;
+  createdAt: string;
+  expiresAt: string;
+  usedAt: string | null;
+}
+
 export interface ApiKeyAuthContext {
   userId: string;
   keyId: string;
@@ -73,6 +81,7 @@ interface StoreShape {
   users: StoredUser[];
   sessions: AuthSession[];
   apiKeys: StoredApiKey[];
+  passwordResets: PasswordReset[];
 }
 
 const dataDir = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), "data"));
@@ -176,7 +185,8 @@ export async function getStore(): Promise<StoreShape> {
       events: parsed.events || [],
       users: parsed.users || [],
       sessions: pruneExpiredSessions(parsed.sessions || []),
-      apiKeys: (parsed as Partial<StoreShape>).apiKeys || []
+      apiKeys: (parsed as Partial<StoreShape>).apiKeys || [],
+      passwordResets: pruneExpiredResets((parsed as Partial<StoreShape>).passwordResets || [])
     };
     migrateOwnedData(cachedStore);
     if (ensureUserAccess(cachedStore)) {
@@ -189,7 +199,8 @@ export async function getStore(): Promise<StoreShape> {
       events: buildSeedEvents(seedLinks),
       users: [],
       sessions: [],
-      apiKeys: []
+      apiKeys: [],
+      passwordResets: []
     };
     await persistStore(cachedStore);
   }
@@ -444,6 +455,82 @@ export async function deleteSession(sessionId: string | undefined): Promise<void
   const idHash = hashSessionId(sessionId);
   store.sessions = store.sessions.filter((session) => session.idHash !== idHash);
   await persistStore(store);
+}
+
+// === Password reset ===
+
+const RESET_TTL_MS = 60 * 60 * 1000; // 1 hour
+const MAX_ACTIVE_RESETS_PER_USER = 3;
+
+// Creates a single-use reset token for the account with this email. Returns the
+// raw token (to email) + the user, or null if no such account exists. Callers
+// must NOT reveal to the requester whether the email matched (no enumeration).
+export async function createPasswordReset(emailInput: string | undefined): Promise<{ token: string; user: AuthUser } | null> {
+  const store = await getStore();
+  const email = normalizeEmail(emailInput);
+  if (!email) return null;
+  const user = store.users.find((entry) => entry.email === email);
+  if (!user) return null;
+  // Suspended accounts can't reset their way back in.
+  if (user.status === "suspended") return null;
+
+  store.passwordResets = pruneExpiredResets(store.passwordResets);
+  // Cap concurrent active tokens per user (drop oldest beyond the cap).
+  const active = store.passwordResets.filter((reset) => reset.userId === user.id && !reset.usedAt);
+  if (active.length >= MAX_ACTIVE_RESETS_PER_USER) {
+    const oldest = active.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())[0];
+    store.passwordResets = store.passwordResets.filter((reset) => reset !== oldest);
+  }
+
+  const token = crypto.randomBytes(32).toString("base64url");
+  const now = new Date();
+  store.passwordResets.push({
+    tokenHash: hashResetToken(token),
+    userId: user.id,
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + RESET_TTL_MS).toISOString(),
+    usedAt: null
+  });
+  await persistStore(store);
+  return { token, user: publicUser(user) };
+}
+
+// Validates a reset token and sets a new password. Marks the token used and
+// invalidates ALL of that user's existing sessions. Returns the user on success.
+export async function consumePasswordReset(token: string | undefined, newPassword: string | undefined): Promise<AuthUser> {
+  const store = await getStore();
+  const raw = String(token || "");
+  const password = String(newPassword || "");
+  if (!raw) throw new Error("This reset link is invalid.");
+  if (password.length < 6) throw new Error("Password must be at least 6 characters.");
+
+  const tokenHash = hashResetToken(raw);
+  const reset = store.passwordResets.find((entry) => safeCompare(entry.tokenHash, tokenHash));
+  if (!reset) throw new Error("This reset link is invalid.");
+  if (reset.usedAt) throw new Error("This reset link has already been used.");
+  if (new Date(reset.expiresAt).getTime() <= Date.now()) throw new Error("This reset link has expired. Please request a new one.");
+
+  const user = store.users.find((entry) => entry.id === reset.userId);
+  if (!user) throw new Error("This reset link is invalid.");
+
+  user.passwordHash = hashPassword(password);
+  reset.usedAt = new Date().toISOString();
+  // Invalidate every other reset token for this user + log them out everywhere.
+  store.passwordResets = store.passwordResets.map((entry) =>
+    entry.userId === user.id && !entry.usedAt ? { ...entry, usedAt: new Date().toISOString() } : entry
+  );
+  store.sessions = store.sessions.filter((session) => session.userId !== user.id);
+  await persistStore(store);
+  return publicUser(user);
+}
+
+function pruneExpiredResets(resets: PasswordReset[]): PasswordReset[] {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000; // keep used/expired tokens 24h for safety, then drop
+  return resets.filter((reset) => new Date(reset.expiresAt).getTime() > cutoff);
+}
+
+function hashResetToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("base64url");
 }
 
 export async function addClickEvent(event: ClickEvent): Promise<void> {

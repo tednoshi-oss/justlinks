@@ -294,6 +294,10 @@ export function App() {
     return result;
   }, [groupFilter, groups, links, query, sortMode]);
 
+  if (typeof window !== "undefined" && window.location.pathname === "/reset") {
+    return <ResetPasswordView />;
+  }
+
   if (authLoading) return <Skeleton />;
 
   if (!authUser) {
@@ -381,18 +385,25 @@ export function App() {
 }
 
 function AuthScreen({ onAuthenticated, error }: { onAuthenticated: (user: AuthUser) => void; error: string | null }) {
-  const [mode, setMode] = useState<"login" | "signup">("signup");
+  const [mode, setMode] = useState<"login" | "signup" | "forgot">("signup");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState<string | null>(error);
   const [saving, setSaving] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setSaving(true);
     setAuthError(null);
     try {
+      if (mode === "forgot") {
+        await api.forgotPassword(email);
+        setForgotSent(true);
+        setSaving(false);
+        return;
+      }
       const user = mode === "signup" ? await api.signup({ name, email, password }) : await api.login({ email, password });
       onAuthenticated(user);
     } catch (requestError) {
@@ -401,15 +412,55 @@ function AuthScreen({ onAuthenticated, error }: { onAuthenticated: (user: AuthUs
     }
   }
 
+  function switchMode(next: "login" | "signup" | "forgot") {
+    setMode(next);
+    setAuthError(null);
+    setForgotSent(false);
+  }
+
+  if (mode === "forgot") {
+    return (
+      <main className="auth-shell">
+        <form className="auth-card" onSubmit={(event) => void submit(event)}>
+          <Brand />
+          {forgotSent ? (
+            <>
+              <h1 className="auth-heading">Check your email</h1>
+              <p className="auth-sub">If an account exists for <strong>{email}</strong>, we've sent a link to reset your password. It expires in 1 hour.</p>
+              <button className="button outline auth-submit" type="button" onClick={() => switchMode("login")}>Back to log in</button>
+            </>
+          ) : (
+            <>
+              <h1 className="auth-heading">Reset your password</h1>
+              <p className="auth-sub">Enter the email on your account and we'll send you a reset link.</p>
+              <label className="field">
+                <span>Email</span>
+                <div className="input-with-icon">
+                  <Mail size={16} />
+                  <input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" autoComplete="email" autoFocus />
+                </div>
+              </label>
+              {authError ? <div className="notice error auth-error">{authError}</div> : null}
+              <button className="button primary auth-submit" type="submit" disabled={saving}>
+                {saving ? "Sending..." : "Send reset link"}
+              </button>
+              <button className="auth-link" type="button" onClick={() => switchMode("login")}>Back to log in</button>
+            </>
+          )}
+        </form>
+      </main>
+    );
+  }
+
   return (
     <main className="auth-shell">
       <form className="auth-card" onSubmit={(event) => void submit(event)}>
         <Brand />
         <div className="auth-tabs">
-          <button type="button" className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")}>
+          <button type="button" className={mode === "signup" ? "active" : ""} onClick={() => switchMode("signup")}>
             Sign up
           </button>
-          <button type="button" className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>
+          <button type="button" className={mode === "login" ? "active" : ""} onClick={() => switchMode("login")}>
             Log in
           </button>
         </div>
@@ -437,11 +488,83 @@ function AuthScreen({ onAuthenticated, error }: { onAuthenticated: (user: AuthUs
           <input required minLength={6} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 6 characters" autoComplete={mode === "signup" ? "new-password" : "current-password"} />
         </label>
 
+        {mode === "login" ? (
+          <button className="auth-link forgot-link" type="button" onClick={() => switchMode("forgot")}>Forgot password?</button>
+        ) : null}
+
         {authError ? <div className="notice error auth-error">{authError}</div> : null}
 
         <button className="button primary auth-submit" type="submit" disabled={saving}>
           {saving ? "Please wait..." : mode === "signup" ? "Create Account" : "Log In"}
         </button>
+      </form>
+    </main>
+  );
+}
+
+function ResetPasswordView() {
+  const token = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("token") || "" : "";
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+    if (password !== confirm) {
+      setError("Passwords don't match.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.resetPassword(token, password);
+      setDone(true);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to reset password.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <main className="auth-shell">
+      <form className="auth-card" onSubmit={(event) => void submit(event)}>
+        <Brand />
+        {done ? (
+          <>
+            <h1 className="auth-heading">Password updated</h1>
+            <p className="auth-sub">Your password has been reset and all other sessions were logged out. You can log in with your new password now.</p>
+            <a className="button primary auth-submit" href="/dashboard/links">Go to log in</a>
+          </>
+        ) : !token ? (
+          <>
+            <h1 className="auth-heading">Invalid reset link</h1>
+            <p className="auth-sub">This link is missing its token. Request a new password reset from the log in page.</p>
+            <a className="button outline auth-submit" href="/dashboard/links">Back to log in</a>
+          </>
+        ) : (
+          <>
+            <h1 className="auth-heading">Choose a new password</h1>
+            <p className="auth-sub">Enter a new password for your account.</p>
+            <label className="field">
+              <span>New password</span>
+              <input required minLength={6} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 6 characters" autoComplete="new-password" autoFocus />
+            </label>
+            <label className="field">
+              <span>Confirm password</span>
+              <input required minLength={6} type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} placeholder="Re-enter password" autoComplete="new-password" />
+            </label>
+            {error ? <div className="notice error auth-error">{error}</div> : null}
+            <button className="button primary auth-submit" type="submit" disabled={saving}>
+              {saving ? "Updating..." : "Reset password"}
+            </button>
+          </>
+        )}
       </form>
     </main>
   );

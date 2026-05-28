@@ -285,6 +285,44 @@ code,
   width: 100%;
 }
 
+.auth-heading {
+  margin: 18px 0 6px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.auth-sub {
+  margin: 0 0 18px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
+.auth-link {
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 0;
+  text-align: center;
+  width: 100%;
+}
+
+.auth-link:hover {
+  text-decoration: underline;
+}
+
+.forgot-link {
+  text-align: right;
+  margin: -6px 0 6px;
+  width: auto;
+  margin-left: auto;
+  display: block;
+}
+
 .pending-card {
   display: grid;
   gap: 16px;

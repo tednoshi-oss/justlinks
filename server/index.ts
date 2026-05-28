@@ -8,9 +8,11 @@ import {
   addClickEvents,
   authenticateApiKey,
   authenticateUser,
+  consumePasswordReset,
   createApiKey,
   createGroup,
   createLink,
+  createPasswordReset,
   createSession,
   createUserAccount,
   deleteApiKey,
@@ -37,6 +39,7 @@ import {
   updateTeamMember
 } from "./storage.js";
 import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
+import { sendPasswordResetEmail } from "./email.js";
 import { classifyReferrer, cleanSlug, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
 import { deepLinkEscapeUrl, effectiveCountryFilter, isCountryBlocked, isEscapedBrowserRequest, isHttpUrl, isLinkPreviewBot, isMobileDevice, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDeepLinkEscapePage, renderLinkPreviewPage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
 import type { ApiKeyPermission, AuthUser, ClickEvent, SmartLink } from "../shared/types.js";
@@ -96,6 +99,39 @@ app.post("/api/auth/logout", async (request, response, next) => {
     response.status(204).end();
   } catch (error) {
     next(error);
+  }
+});
+
+app.post("/api/auth/forgot", async (request, response, next) => {
+  try {
+    const email = String(request.body?.email || "").trim();
+    if (!email || !email.includes("@")) {
+      response.status(400).json({ error: "Enter a valid email address." });
+      return;
+    }
+    // Light per-process throttle to blunt abuse (no enumeration, no hard fail).
+    if (!allowForgotRequest(email, clientIp(request))) {
+      response.json({ ok: true });
+      return;
+    }
+    const reset = await createPasswordReset(email);
+    if (reset) {
+      const resetUrl = `${appOrigin(request)}/reset?token=${encodeURIComponent(reset.token)}`;
+      await sendPasswordResetEmail(reset.user.email, resetUrl).catch((error) => console.error("Failed to send reset email", error));
+    }
+    // Always return the same response — never reveal whether the email exists.
+    response.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/auth/reset", async (request, response, next) => {
+  try {
+    await consumePasswordReset(request.body?.token, request.body?.password);
+    response.json({ ok: true });
+  } catch (error) {
+    response.status(400).json({ error: error instanceof Error ? error.message : "Unable to reset password." });
   }
 });
 
@@ -447,7 +483,7 @@ app.get("/api/analytics", async (request, response, next) => {
 
 app.get("/l/:slug", redirectSlug);
 app.get("/:slug", (request, response, next) => {
-  const reserved = new Set(["dashboard", "api", "assets", "favicon.png"]);
+  const reserved = new Set(["dashboard", "api", "assets", "favicon.png", "reset", "forgot"]);
   if (reserved.has(request.params.slug) || request.params.slug.includes(".")) {
     next();
     return;
@@ -601,6 +637,36 @@ function absoluteRequestUrl(request: Request): string {
   const protocol = String(request.get("x-forwarded-proto") || request.protocol || "https").split(",")[0].trim();
   const host = String(request.get("x-forwarded-host") || request.get("host") || "localhost");
   return `${protocol}://${host}${request.originalUrl}`;
+}
+
+// Base origin for building user-facing links (e.g. the password reset page).
+// Prefer an explicit env (so emails always point at the right host even when
+// behind the Cloudflare worker), else derive from the request.
+function appOrigin(request: Request): string {
+  const configured = (process.env.APP_PUBLIC_URL || "").trim().replace(/\/+$/, "");
+  if (configured) return configured;
+  const protocol = String(request.get("x-forwarded-proto") || request.protocol || "https").split(",")[0].trim();
+  const host = String(request.get("x-forwarded-host") || request.get("host") || "localhost");
+  return `${protocol}://${host}`;
+}
+
+// Simple in-memory throttle for forgot-password requests, keyed by email + IP.
+// Not a substitute for a real rate limiter, but blunts trivial abuse.
+const forgotAttempts = new Map<string, { count: number; windowStart: number }>();
+const FORGOT_WINDOW_MS = 15 * 60 * 1000;
+const FORGOT_MAX_PER_WINDOW = 5;
+
+function allowForgotRequest(email: string, ip: string): boolean {
+  const key = `${email.toLowerCase()}|${ip}`;
+  const now = Date.now();
+  const entry = forgotAttempts.get(key);
+  if (!entry || now - entry.windowStart > FORGOT_WINDOW_MS) {
+    forgotAttempts.set(key, { count: 1, windowStart: now });
+    return true;
+  }
+  if (entry.count >= FORGOT_MAX_PER_WINDOW) return false;
+  entry.count += 1;
+  return true;
 }
 
 app.use(express.static(clientDist, { maxAge: "1h", etag: true }));

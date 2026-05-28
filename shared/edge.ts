@@ -41,7 +41,7 @@ export interface LinkPreviewMetadata {
 }
 
 export const dashboardPathPrefixes = ["/dashboard", "/api", "/assets"] as const;
-export const dashboardExactPaths = ["/", "/favicon.png", "/favicon.svg", "/tapsocials-logo.svg", "/robots.txt", "/manifest.webmanifest"] as const;
+export const dashboardExactPaths = ["/", "/reset", "/forgot", "/favicon.png", "/favicon.svg", "/tapsocials-logo.svg", "/robots.txt", "/manifest.webmanifest"] as const;
 
 export function toEdgeLink(link: SmartLink, group?: Pick<LinkGroup, "countryFilterMode" | "blockedCountries" | "allowedCountries"> | null): EdgeLinkConfig {
   const filter = effectiveCountryFilter(link, group);
