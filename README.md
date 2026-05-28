@@ -63,6 +63,12 @@ Set these Render environment variables after the Cloudflare resources exist:
 - `EDGE_SYNC_SECRET`: a long random secret shared with the Worker.
 - `EDGE_WORKER_SYNC_URL`: the Worker sync endpoint, for example `https://tapsocials.com/__edge`.
 
+Password reset emails are sent through [Resend](https://resend.com). To enable them:
+
+- `RESEND_API_KEY`: an API key from the Resend dashboard (set this as a secret; without it, reset links are only logged to the server console).
+- `EMAIL_FROM`: the sender address, for example `TapSocials <noreply@tapsocials.com>`. The domain must be verified in Resend. For a quick test without a verified domain, use `onboarding@resend.dev` (only delivers to your own Resend account email).
+- `APP_BASE_URL`: the public site URL used to build reset links, for example `https://tapsocials.com`.
+
 After those are set, creating/updating/deleting links in the dashboard syncs them to Cloudflare KV automatically. You can also trigger a full sync with:
 
 ```bash

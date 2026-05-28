@@ -16,6 +16,13 @@ services:
         sync: false
       - key: EDGE_WORKER_SYNC_URL
         value: https://tapsocials.com/__edge
+      # Password reset email (Resend). Paste RESEND_API_KEY in the Render dashboard.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: TapSocials <noreply@tapsocials.com>
+      - key: APP_BASE_URL
+        value: https://tapsocials.com
     disk:
       name: tapsocials-data
       mountPath: /opt/render/project/src/storage
