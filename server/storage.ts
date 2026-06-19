@@ -535,6 +535,9 @@ function hashResetToken(token: string): string {
 
 export async function addClickEvent(event: ClickEvent): Promise<void> {
   const store = await getStore();
+  // Drop clicks for links that no longer exist (e.g. an edge-queued click that
+  // lands after the link was deleted) so nothing from a deleted link is stored.
+  if (!store.links.some((link) => link.id === event.linkId)) return;
   store.events.unshift(withEventOwner(store, event));
   store.events = store.events.slice(0, 100000);
   schedulePersist(store);
@@ -543,7 +546,10 @@ export async function addClickEvent(event: ClickEvent): Promise<void> {
 export async function addClickEvents(events: ClickEvent[]): Promise<void> {
   if (!events.length) return;
   const store = await getStore();
-  store.events.unshift(...events.map((event) => withEventOwner(store, event)));
+  const liveLinkIds = new Set(store.links.map((link) => link.id));
+  const accepted = events.filter((event) => liveLinkIds.has(event.linkId));
+  if (!accepted.length) return;
+  store.events.unshift(...accepted.map((event) => withEventOwner(store, event)));
   store.events = store.events.slice(0, 100000);
   schedulePersist(store);
 }
