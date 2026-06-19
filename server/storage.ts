@@ -759,9 +759,13 @@ function groupsForUser(store: StoreShape, userId: string): LinkGroup[] {
   return store.groups.filter((group) => group.userId === userId);
 }
 
-function eventsForLinks(store: StoreShape, links: SmartLink[], userId: string): ClickEvent[] {
+// Scope analytics strictly to events whose link still exists. This guarantees a
+// deleted link's clicks disappear from every aggregate (Dashboard totals,
+// Analytics, breakdowns) regardless of whether the on-delete event purge ran or
+// a click was still in flight through the edge queue when the link was removed.
+function eventsForLinks(store: StoreShape, links: SmartLink[], _userId: string): ClickEvent[] {
   const linkIds = new Set(links.map((link) => link.id));
-  return store.events.filter((event) => event.userId === userId || linkIds.has(event.linkId));
+  return store.events.filter((event) => linkIds.has(event.linkId));
 }
 
 function isGroupOwnedByUser(store: StoreShape, userId: string, groupId: string | null | undefined): boolean {
