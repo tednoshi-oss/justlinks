@@ -56,8 +56,11 @@ export async function deleteLinkFromEdge(slug: string): Promise<void> {
 
 export async function syncLinksToEdge(links: SmartLink[], groups: LinkGroup[] = []): Promise<{ synced: number; configured: boolean }> {
   if (!isEdgeSyncConfigured()) return { synced: 0, configured: false };
-  const groupById = new Map(groups.map((group) => [group.id, group] as const));
-  const buildEdgeLink = (link: SmartLink) => toEdgeLink(link, link.groupId ? groupById.get(link.groupId) || null : null);
+  // Group ids are unique per-user (name slugs), not globally — key by owner+id so
+  // a link never resolves to a different user's identically-named group.
+  const groupByOwnerId = new Map(groups.map((group) => [`${group.userId ?? ""}:${group.id}`, group] as const));
+  const groupFor = (link: SmartLink) => (link.groupId ? groupByOwnerId.get(`${link.userId ?? ""}:${link.groupId}`) || null : null);
+  const buildEdgeLink = (link: SmartLink) => toEdgeLink(link, groupFor(link));
 
   if (edgeWorkerSyncUrl && edgeSyncSecret) {
     const response = await fetch(`${edgeWorkerSyncUrl}/sync`, {
@@ -69,7 +72,7 @@ export async function syncLinksToEdge(links: SmartLink[], groups: LinkGroup[] = 
     return { synced: links.length, configured: true };
   }
 
-  await Promise.all(links.map((link) => syncLinkToEdge(link, link.groupId ? groupById.get(link.groupId) || null : null)));
+  await Promise.all(links.map((link) => syncLinkToEdge(link, groupFor(link))));
   return { synced: links.length, configured: true };
 }
 

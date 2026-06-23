@@ -42,7 +42,7 @@ import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncL
 import { sendPasswordResetEmail } from "./email.js";
 import { classifyReferrer, cleanSlug, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
 import { deepLinkEscapeUrl, effectiveCountryFilter, isCountryBlocked, isEscapedBrowserRequest, isHttpUrl, isLinkPreviewBot, isMobileDevice, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDeepLinkEscapePage, renderLinkPreviewPage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
-import type { ApiKeyPermission, AuthUser, ClickEvent, SmartLink } from "../shared/types.js";
+import type { ApiKeyPermission, AuthUser, ClickEvent, LinkGroup, SmartLink } from "../shared/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -140,8 +140,10 @@ app.get("/api/edge/links", async (request, response, next) => {
   try {
     const links = await listRawLinks();
     const groups = await listAllGroups();
-    const groupById = new Map(groups.map((group) => [group.id, group] as const));
-    response.json(links.map((link) => toEdgeLink(link, link.groupId ? groupById.get(link.groupId) || null : null)));
+    // Group ids are unique per-user (name slugs), not globally — key by owner+id
+    // so a link never resolves to a different user's identically-named group.
+    const groupByOwnerId = new Map(groups.map((group) => [`${group.userId ?? ""}:${group.id}`, group] as const));
+    response.json(links.map((link) => toEdgeLink(link, link.groupId ? groupByOwnerId.get(`${link.userId ?? ""}:${link.groupId}`) || null : null)));
   } catch (error) {
     next(error);
   }
@@ -191,6 +193,7 @@ app.post("/api/public/create-link", async (request, response, next) => {
     const destination = String(request.body?.destination_url || "").trim();
     const isDeepLink = Boolean(request.body?.is_deep_link);
     const shortCode = typeof request.body?.short_code === "string" ? request.body.short_code.trim() : "";
+    const groupName = typeof request.body?.group_name === "string" ? request.body.group_name.trim() : "";
 
     if (!title || !destination) {
       response.status(400).json({ error: "title and destination_url are required." });
@@ -219,6 +222,19 @@ app.post("/api/public/create-link", async (request, response, next) => {
       }
     }
 
+    // Resolve group_name to one of THIS API user's own groups (case-insensitive).
+    // Auto-create the group for this user if no match exists. Scoped to
+    // context.userId throughout, so a caller can never attach to or create within
+    // another user's groups. Absent/empty group_name → ungrouped (unchanged).
+    let resolvedGroup: LinkGroup | null = null;
+    if (groupName) {
+      const ownGroups = await listGroups(context.userId);
+      resolvedGroup = ownGroups.find((group) => group.name.trim().toLowerCase() === groupName.toLowerCase()) ?? null;
+      if (!resolvedGroup) {
+        resolvedGroup = await createGroup({ name: groupName }, context.userId);
+      }
+    }
+
     const link = await createLink(
       {
         name: title,
@@ -231,13 +247,19 @@ app.post("/api/public/create-link", async (request, response, next) => {
         notes: "",
         tags: [],
         isDeepLink,
-        forceExternalBrowser: isDeepLink
+        forceExternalBrowser: isDeepLink,
+        groupId: resolvedGroup ? resolvedGroup.id : undefined
       },
       context.userId
     );
     const apiLinkGroup = link.groupId ? await findGroupById(link.groupId, context.userId) : null;
     await syncLinkToEdge(link, apiLinkGroup ?? null).catch((error) => console.error("Failed to sync API link to edge", error));
-    response.json({ link: publicApiLink(link) });
+    response.json({
+      link: {
+        ...publicApiLink(link),
+        group: link.groupId && apiLinkGroup ? { id: apiLinkGroup.id, name: apiLinkGroup.name } : null
+      }
+    });
   } catch (error) {
     next(error);
   }
@@ -248,6 +270,17 @@ app.get("/api/public/list-links", async (request, response, next) => {
     const context = await requireApiPermission(request, response, "get_stats");
     if (!context) return;
     response.json({ links: await listPublicApiLinks(context.userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/public/list-groups", async (request, response, next) => {
+  try {
+    const context = await requireApiPermission(request, response, "get_stats");
+    if (!context) return;
+    const groups = await listGroups(context.userId);
+    response.json({ groups: groups.map((group) => ({ id: group.id, name: group.name })) });
   } catch (error) {
     next(error);
   }
@@ -533,7 +566,7 @@ async function redirectSlug(request: express.Request, response: express.Response
     }
 
     const country = normalizeCountryCode(request.get("cf-ipcountry") || request.get("x-vercel-ip-country") || "");
-    const linkGroup = link.groupId ? await findGroupById(link.groupId) : null;
+    const linkGroup = link.groupId ? await findGroupById(link.groupId, link.userId) : null;
     const effectiveFilter = effectiveCountryFilter(link, linkGroup ?? null);
     if (isCountryBlocked(effectiveFilter, country)) {
       response.set({
