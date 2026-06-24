@@ -73,7 +73,7 @@ test("iOS deep link escape page uses fast Safari trampoline with fallback", () =
   assert.doesNotMatch(html, /shortcuts:\/\/x-callback-url\/run-shortcut/);
 });
 
-test("Instagram iOS gets a never-blank manual escape card preferring Chrome then Safari", () => {
+test("Instagram iOS auto-attempts escape on load, prefers Chrome then Safari, never blanks", () => {
   const html = renderDeepLinkEscapePage(
     "https://tapsocials.com/d-test?escaped=1",
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Instagram 300.0.0.0"
@@ -82,7 +82,10 @@ test("Instagram iOS gets a never-blank manual escape card preferring Chrome then
   assert.doesNotMatch(html, /document\.write\(freshHtml\)/);
   assert.match(html, /onclick="openExternal\(\)"/);
   assert.match(html, /Open in browser/);
-  // Tapping launches Chrome first, then falls back to Safari.
+  // Fires the escape automatically on load, then reveals the fallback card only if still here.
+  assert.match(html, /attempt\(\);\s*<\/script>/);
+  assert.match(html, /setTimeout\(reveal,\s*\d+\)/);
+  // Tapping (and the auto-attempt) launch Chrome first, then fall back to Safari.
   assert.match(html, /googlechromes:\/\//);
   assert.match(html, /x-safari-https:\/\//);
   // No dead schemes.
@@ -90,13 +93,14 @@ test("Instagram iOS gets a never-blank manual escape card preferring Chrome then
   assert.doesNotMatch(html, /shortcuts:\/\/x-callback-url/);
 });
 
-test("Instagram Android gets a never-blank manual escape card with a forced Chrome intent", () => {
+test("Instagram Android auto-attempts a forced Chrome intent on load, never blanks", () => {
   const html = renderDeepLinkEscapePage(
     "https://tapsocials.com/d-test?escaped=1",
     "Mozilla/5.0 (Linux; Android 14; Pixel) AppleWebKit/537.36 Instagram 300.0.0.0"
   );
-  // Never blank: it renders a tap button, not the aborted-trampoline blank page.
+  // Never blank: renders the fallback card + auto-attempts escape on load.
   assert.match(html, /onclick="openExternal\(\)"/);
+  assert.match(html, /attempt\(\);\s*<\/script>/);
   assert.match(html, /Open in Chrome/);
   assert.match(html, /intent:\/\//);
   assert.match(html, /package=com\.android\.chrome/);

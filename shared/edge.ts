@@ -307,32 +307,36 @@ export function renderDeepLinkEscapePage(targetUrl: string, userAgent = ""): str
   return renderFastBrowserTrampoline(targetUrl, browserName, isAndroid, safeTarget);
 }
 
-// A never-blank escape card for in-app browsers that block automatic escape.
-// One clear tap launches an external browser: Chrome on Android (forced intent),
-// Chrome-then-Safari on iOS (prefers Chrome since many users set it as default).
+// Escape page for in-app browsers (Instagram, FB, TikTok, Threads). It fires the
+// browser-escape automatically on load, so on devices/apps that allow it the user
+// goes straight to their browser and only sees a brief "Opening…" splash. If the
+// app blocks the auto-escape (e.g. current iOS Instagram, which Apple+Meta lock
+// down), a one-tap fallback card is revealed instead — never a blank page.
 function renderManualEscapePage(targetUrl: string, isIos: boolean, isAndroid: boolean): string {
   const jsTarget = JSON.stringify(targetUrl);
   const safeTarget = escapeHtml(targetUrl);
   const buttonLabel = isAndroid ? "Open in Chrome" : "Open in browser";
   const menuHint = isAndroid ? "Open in Chrome" : "Open in external browser";
+  // How the escape is attempted, used both for the on-load auto-attempt and the
+  // manual button. Android: forced Chrome intent. iOS: Chrome first (many users
+  // default to it), Safari as a fallback shortly after.
+  const attemptBody = isAndroid
+    ? "try{go(androidIntent(target));}catch(e){}"
+    : isIos
+      ? "go(chromeScheme(target));setTimeout(function(){if(!document.hidden){go(safariScheme(target));}},350);"
+      : "window.location.href=target;";
   const styles =
-    "body{margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#fff;font-family:-apple-system,BlinkMacSystemFont,Inter,ui-sans-serif,system-ui,sans-serif}main{width:min(360px,calc(100vw - 40px));border:1px solid rgb(255 255 255 / .12);border-radius:18px;background:#1a1a2e;padding:24px;text-align:center;box-shadow:0 24px 80px rgb(0 0 0 / .5)}h1{margin:0 0 8px;font-size:20px}p{margin:0;color:rgb(255 255 255 / .62);font-size:14px;line-height:1.45}.primary,.secondary{display:flex;width:100%;min-height:46px;align-items:center;justify-content:center;border:0;border-radius:12px;font-weight:700;text-decoration:none;cursor:pointer;font-size:15px}.primary{margin-top:20px;background:#3b82f6;color:#fff}.secondary{margin-top:12px;background:rgb(255 255 255 / .06);color:rgb(255 255 255 / .82);border:1px solid rgb(255 255 255 / .12)}small{display:block;margin-top:14px;color:rgb(255 255 255 / .42);font-size:12px;line-height:1.4}";
+    "*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#fff;font-family:-apple-system,BlinkMacSystemFont,Inter,ui-sans-serif,system-ui,sans-serif}main{width:min(360px,calc(100vw - 40px));text-align:center}#status{display:flex;flex-direction:column;align-items:center;gap:14px;color:rgb(255 255 255 / .7);font-size:14px}#status .sp{width:30px;height:30px;border-radius:50%;border:3px solid rgb(255 255 255 / .15);border-top-color:#3b82f6;animation:sp .8s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}#card{display:none;border:1px solid rgb(255 255 255 / .12);border-radius:18px;background:#1a1a2e;padding:24px;box-shadow:0 24px 80px rgb(0 0 0 / .5)}h1{margin:0 0 8px;font-size:20px}p{margin:0;color:rgb(255 255 255 / .62);font-size:14px;line-height:1.45}.primary,.secondary{display:flex;width:100%;min-height:46px;align-items:center;justify-content:center;border:0;border-radius:12px;font-weight:700;text-decoration:none;cursor:pointer;font-size:15px}.primary{margin-top:20px;background:#3b82f6;color:#fff}.secondary{margin-top:12px;background:rgb(255 255 255 / .06);color:rgb(255 255 255 / .82);border:1px solid rgb(255 255 255 / .12)}small{display:block;margin-top:14px;color:rgb(255 255 255 / .42);font-size:12px;line-height:1.4}";
 
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(buttonLabel)}</title><style>${styles}</style></head><body><main><h1>${escapeHtml(buttonLabel)}</h1><p>This app's built-in browser can't open the link directly. Tap below to continue.</p><button class="primary" type="button" onclick="openExternal()">${escapeHtml(buttonLabel)}</button><button class="secondary" type="button" onclick="copyLink()">Copy link instead</button><small>Or tap the &#8943; menu in the top-right and choose &ldquo;${escapeHtml(menuHint)}&rdquo;.</small></main><script>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Opening browser…</title><style>${styles}</style></head><body><main><div id="status"><div class="sp"></div><div>Opening your browser…</div></div><div id="card"><h1>${escapeHtml(buttonLabel)}</h1><p>This app's built-in browser blocked the link. Tap to continue.</p><button class="primary" type="button" onclick="openExternal()">${escapeHtml(buttonLabel)}</button><button class="secondary" type="button" onclick="copyLink()">Copy link instead</button><small>Or tap the &#8943; menu in the top-right and choose &ldquo;${escapeHtml(menuHint)}&rdquo;.</small></div></main><script>
 var target=${jsTarget};
 function go(url){var a=document.createElement('a');a.href=url;a.rel='noreferrer';a.target='_self';document.body.appendChild(a);a.click();}
 function chromeScheme(u){return u.replace(/^https:\\/\\//,'googlechromes://').replace(/^http:\\/\\//,'googlechrome://');}
 function safariScheme(u){return 'x-safari-https://'+u.replace(/^https?:\\/\\//,'');}
 function androidIntent(u){var p=new URL(u);return 'intent://'+p.host+p.pathname+p.search+p.hash+'#Intent;scheme=https;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;package=com.android.chrome;S.browser_fallback_url='+encodeURIComponent(u)+';end';}
-function openExternal(){
-  ${
-    isAndroid
-      ? "try{go(androidIntent(target));}catch(e){window.location.href=target;}"
-      : isIos
-        ? "go(chromeScheme(target));setTimeout(function(){if(!document.hidden){go(safariScheme(target));}},600);"
-        : "window.location.href=target;"
-  }
-}
+function attempt(){${attemptBody}}
+function openExternal(){attempt();}
+function reveal(){var s=document.getElementById('status'),c=document.getElementById('card');if(s)s.style.display='none';if(c)c.style.display='block';}
 function copyLink(){
   var btn=document.querySelector('.secondary');
   function done(){if(btn)btn.textContent='Link copied — paste in your browser';}
@@ -340,6 +344,9 @@ function copyLink(){
   fallback();
   function fallback(){var t=document.createElement('textarea');t.value=target;t.style.cssText='position:fixed;opacity:0';document.body.appendChild(t);t.select();try{document.execCommand('copy');done();}catch(e){}document.body.removeChild(t);}
 }
+var revealTimer=setTimeout(reveal,1000);
+document.addEventListener('visibilitychange',function(){if(document.hidden){clearTimeout(revealTimer);}});
+attempt();
 </script><noscript><p><a href="${safeTarget}">Open link</a></p></noscript></body></html>`;
 }
 
