@@ -19,6 +19,7 @@ import {
   renderLinkPreviewPage,
   selectWebFallback,
   selectDestination,
+  isInstagramInAppBrowser,
   shouldServeFastDeepLinkEscape,
   shouldUseBrowserEscape,
   slugFromPath
@@ -123,7 +124,9 @@ export default {
       context.waitUntil(sendClickBatchToDashboard([click], env));
     }
 
-    if (browserEscape && isHttpUrl(webDestination) && isMobileDevice(device)) {
+    // Instagram traffic is intentionally left to open in its in-app browser (no
+    // escape page) for now; Reddit and other sources still auto-escape.
+    if (browserEscape && isHttpUrl(webDestination) && isMobileDevice(device) && !isInstagramInAppBrowser(userAgent)) {
       if (isEscapedBrowserRequest(url.searchParams)) return Response.redirect(webDestination, 302);
       return htmlResponse(renderDeepLinkEscapePage(deepLinkEscapeUrl(request.url), userAgent), 200, noCacheHeaders());
     }

@@ -251,6 +251,14 @@ export function isLinkPreviewBot(userAgent = ""): boolean {
   return /TelegramBot|Twitterbot|facebookexternalhit|Facebot|WhatsApp|Slackbot|Discordbot|LinkedInBot|Pinterest|SkypeUriPreview|redditbot|Applebot|Googlebot|bingbot|bot|crawler|spider/i.test(userAgent);
 }
 
+// Instagram's in-app browser. Currently we let Instagram traffic open links in
+// its own in-app browser instead of serving the escape page (the iOS escape is
+// blocked by Apple/Meta and the UX isn't worth it for now). Reddit and other
+// sources are unaffected and keep auto-escaping. Flip the call sites to re-enable.
+export function isInstagramInAppBrowser(userAgent = ""): boolean {
+  return /instagram/i.test(userAgent);
+}
+
 export function isEscapedBrowserRequest(searchParams: URLSearchParams): boolean {
   return searchParams.get("escaped") === "1";
 }

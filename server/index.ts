@@ -41,7 +41,7 @@ import {
 import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
 import { sendPasswordResetEmail } from "./email.js";
 import { classifyReferrer, cleanSlug, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
-import { deepLinkEscapeUrl, effectiveCountryFilter, isCountryBlocked, isEscapedBrowserRequest, isHttpUrl, isLinkPreviewBot, isMobileDevice, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDeepLinkEscapePage, renderLinkPreviewPage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
+import { deepLinkEscapeUrl, effectiveCountryFilter, isCountryBlocked, isEscapedBrowserRequest, isHttpUrl, isInstagramInAppBrowser, isLinkPreviewBot, isMobileDevice, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDeepLinkEscapePage, renderLinkPreviewPage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
 import type { ApiKeyPermission, AuthUser, ClickEvent, LinkGroup, SmartLink } from "../shared/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -600,7 +600,9 @@ async function redirectSlug(request: express.Request, response: express.Response
       console.error("Failed to record click", error);
     });
 
-    if (browserEscape && isHttpUrl(webDestination) && isMobileDevice(device)) {
+    // Instagram traffic is intentionally left to open in its in-app browser (no
+    // escape page) for now; Reddit and other sources still auto-escape.
+    if (browserEscape && isHttpUrl(webDestination) && isMobileDevice(device) && !isInstagramInAppBrowser(userAgent)) {
       if (isEscapedBrowserRequest(new URLSearchParams(request.query as Record<string, string>))) {
         response.redirect(302, webDestination);
         return;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SmartLink } from "../shared/types.js";
-import { androidExternalBrowserIntent, deepLinkEscapeUrl, effectiveCountryFilter, externalBrowserEscapeAttemptUrl, isCountryBlocked, isEscapedBrowserRequest, isInAppBrowser, isLinkPreviewBot, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDeepLinkEscapePage, renderLinkPreviewPage, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape } from "../shared/edge.js";
+import { androidExternalBrowserIntent, deepLinkEscapeUrl, effectiveCountryFilter, externalBrowserEscapeAttemptUrl, isCountryBlocked, isEscapedBrowserRequest, isInAppBrowser, isInstagramInAppBrowser, isLinkPreviewBot, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDeepLinkEscapePage, renderLinkPreviewPage, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape } from "../shared/edge.js";
 import { cleanSlug, detectDevice, selectDestination } from "../server/routing.js";
 
 const link: SmartLink = {
@@ -73,50 +73,29 @@ test("iOS deep link escape page uses fast Safari trampoline with fallback", () =
   assert.doesNotMatch(html, /shortcuts:\/\/x-callback-url\/run-shortcut/);
 });
 
-test("Instagram iOS auto-attempts escape on load, prefers Chrome then Safari, never blanks", () => {
-  const html = renderDeepLinkEscapePage(
-    "https://tapsocials.com/d-test?escaped=1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Instagram 300.0.0.0"
-  );
-  // It is a real, rendered page (not the auto-escape trampoline) with a tap button.
-  assert.doesNotMatch(html, /document\.write\(freshHtml\)/);
-  assert.match(html, /onclick="openExternal\(\)"/);
-  assert.match(html, /Open in browser/);
-  // Fires the escape automatically on load, then reveals the fallback card only if still here.
-  assert.match(html, /attempt\(\);\s*<\/script>/);
-  assert.match(html, /setTimeout\(reveal,\s*\d+\)/);
-  // Auto-attempt uses the URL schemes (works where the OS allows it).
-  assert.match(html, /googlechromes:\/\//);
-  assert.match(html, /x-safari-https:\/\//);
-  // The manual button uses the native share sheet — the only thing that reliably
-  // escapes iOS Instagram once the schemes are blocked.
-  assert.match(html, /navigator\.share/);
-  // No dead schemes.
-  assert.doesNotMatch(html, /com-apple-mobilesafari-tab/);
-  assert.doesNotMatch(html, /shortcuts:\/\/x-callback-url/);
+test("Instagram in-app browser is detected so its traffic skips the escape page (opens in-app)", () => {
+  // The redirect handlers gate the escape page on !isInstagramInAppBrowser, so
+  // Instagram traffic just opens in its in-app browser. Reddit/FB/TikTok don't match.
+  assert.equal(isInstagramInAppBrowser("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Instagram 300.0.0.0"), true);
+  assert.equal(isInstagramInAppBrowser("Mozilla/5.0 (Linux; Android 14; Pixel) Instagram 300.0.0.0"), true);
+  assert.equal(isInstagramInAppBrowser("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Reddit/2026"), false);
+  assert.equal(isInstagramInAppBrowser("Mozilla/5.0 (Linux; Android 14) FBAN/FB4A;FBAV/450"), false);
+  assert.equal(isInstagramInAppBrowser("Mozilla/5.0 (iPhone) BytedanceWebview/d8a21c TikTok 32"), false);
+  assert.equal(isInstagramInAppBrowser(""), false);
 });
 
-test("Instagram Android auto-attempts a forced Chrome intent on load, never blanks", () => {
-  const html = renderDeepLinkEscapePage(
-    "https://tapsocials.com/d-test?escaped=1",
-    "Mozilla/5.0 (Linux; Android 14; Pixel) AppleWebKit/537.36 Instagram 300.0.0.0"
-  );
-  // Never blank: renders the fallback card + auto-attempts escape on load.
-  assert.match(html, /onclick="openExternal\(\)"/);
-  assert.match(html, /attempt\(\);\s*<\/script>/);
-  assert.match(html, /Open in Chrome/);
-  assert.match(html, /intent:\/\//);
-  assert.match(html, /package=com\.android\.chrome/);
-  assert.match(html, /S\.browser_fallback_url/);
-});
-
-test("Facebook/TikTok in-app browsers also get the manual escape card (no blank page)", () => {
+test("Facebook/TikTok in-app browsers still get the manual escape card (never blank)", () => {
+  // Android (Facebook): forced Chrome intent + auto-attempt on load.
   const fb = renderDeepLinkEscapePage("https://tapsocials.com/d-test?escaped=1", "Mozilla/5.0 (Linux; Android 14) FBAN/FB4A;FBAV/450");
+  assert.doesNotMatch(fb, /document\.write\(freshHtml\)/);
   assert.match(fb, /onclick="openExternal\(\)"/);
+  assert.match(fb, /attempt\(\);\s*<\/script>/);
   assert.match(fb, /package=com\.android\.chrome/);
+  // iOS (TikTok): auto-attempt schemes on load + native share sheet on tap.
   const tiktok = renderDeepLinkEscapePage("https://tapsocials.com/d-test?escaped=1", "Mozilla/5.0 (iPhone) BytedanceWebview/d8a21c TikTok 32");
   assert.match(tiktok, /onclick="openExternal\(\)"/);
   assert.match(tiktok, /googlechromes:\/\//);
+  assert.match(tiktok, /navigator\.share/);
 });
 
 test("Android deep link escape page uses an anchor-click Chrome intent", () => {
