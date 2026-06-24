@@ -68,8 +68,48 @@ test("iOS deep link escape page uses fast Safari trampoline with fallback", () =
   assert.match(html, /document\.write\(freshHtml\)/);
   assert.match(html, /tapOpen\("x-safari-https/);
   assert.match(html, /x-safari-https/);
-  assert.match(html, /com-apple-mobilesafari-tab/);
-  assert.match(html, /shortcuts:\/\/x-callback-url\/run-shortcut/);
+  // Dead schemes were removed in cleanup — Safari tab + Shortcuts hacks no longer fire.
+  assert.doesNotMatch(html, /com-apple-mobilesafari-tab/);
+  assert.doesNotMatch(html, /shortcuts:\/\/x-callback-url\/run-shortcut/);
+});
+
+test("Instagram iOS gets a never-blank manual escape card preferring Chrome then Safari", () => {
+  const html = renderDeepLinkEscapePage(
+    "https://tapsocials.com/d-test?escaped=1",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Instagram 300.0.0.0"
+  );
+  // It is a real, rendered page (not the auto-escape trampoline) with a tap button.
+  assert.doesNotMatch(html, /document\.write\(freshHtml\)/);
+  assert.match(html, /onclick="openExternal\(\)"/);
+  assert.match(html, /Open in browser/);
+  // Tapping launches Chrome first, then falls back to Safari.
+  assert.match(html, /googlechromes:\/\//);
+  assert.match(html, /x-safari-https:\/\//);
+  // No dead schemes.
+  assert.doesNotMatch(html, /com-apple-mobilesafari-tab/);
+  assert.doesNotMatch(html, /shortcuts:\/\/x-callback-url/);
+});
+
+test("Instagram Android gets a never-blank manual escape card with a forced Chrome intent", () => {
+  const html = renderDeepLinkEscapePage(
+    "https://tapsocials.com/d-test?escaped=1",
+    "Mozilla/5.0 (Linux; Android 14; Pixel) AppleWebKit/537.36 Instagram 300.0.0.0"
+  );
+  // Never blank: it renders a tap button, not the aborted-trampoline blank page.
+  assert.match(html, /onclick="openExternal\(\)"/);
+  assert.match(html, /Open in Chrome/);
+  assert.match(html, /intent:\/\//);
+  assert.match(html, /package=com\.android\.chrome/);
+  assert.match(html, /S\.browser_fallback_url/);
+});
+
+test("Facebook/TikTok in-app browsers also get the manual escape card (no blank page)", () => {
+  const fb = renderDeepLinkEscapePage("https://tapsocials.com/d-test?escaped=1", "Mozilla/5.0 (Linux; Android 14) FBAN/FB4A;FBAV/450");
+  assert.match(fb, /onclick="openExternal\(\)"/);
+  assert.match(fb, /package=com\.android\.chrome/);
+  const tiktok = renderDeepLinkEscapePage("https://tapsocials.com/d-test?escaped=1", "Mozilla/5.0 (iPhone) BytedanceWebview/d8a21c TikTok 32");
+  assert.match(tiktok, /onclick="openExternal\(\)"/);
+  assert.match(tiktok, /googlechromes:\/\//);
 });
 
 test("Android deep link escape page uses an anchor-click Chrome intent", () => {

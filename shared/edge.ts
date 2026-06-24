@@ -291,17 +291,56 @@ export function externalBrowserEscapeAttemptUrl(targetUrl: string, device: Devic
 
 export function renderDeepLinkEscapePage(targetUrl: string, userAgent = ""): string {
   const safeTarget = escapeHtml(targetUrl);
-  const jsTarget = JSON.stringify(targetUrl);
   const isIos = /iphone|ipad|ipod/i.test(userAgent);
   const isAndroid = /android/i.test(userAgent);
   const browserName = isAndroid ? "Chrome" : "Safari";
-  const instagramIos = isIos && /instagram/i.test(userAgent);
 
-  if (instagramIos) {
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open in Safari</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#fff;font-family:-apple-system,BlinkMacSystemFont,Inter,ui-sans-serif,system-ui,sans-serif}main{width:min(360px,calc(100vw - 40px));border:1px solid rgb(255 255 255 / .12);border-radius:18px;background:#1a1a2e;padding:24px;text-align:center;box-shadow:0 24px 80px rgb(0 0 0 / .5)}h1{margin:0 0 8px;font-size:20px}p{margin:0;color:rgb(255 255 255 / .62);font-size:14px;line-height:1.45}.primary,.secondary{display:flex;width:100%;min-height:46px;align-items:center;justify-content:center;border:0;border-radius:12px;font-weight:700;text-decoration:none}.primary{margin-top:20px;background:#3b82f6;color:#fff}.secondary{margin-top:12px;background:rgb(255 255 255 / .06);color:rgb(255 255 255 / .82);border:1px solid rgb(255 255 255 / .12)}small{display:block;margin-top:10px;color:rgb(255 255 255 / .42)}</style></head><body><main><h1>Open in Safari</h1><p>Instagram's browser can't open this link directly.</p><button class="primary" type="button" onclick="tapShareBrowser()">Share &amp; Open in Safari</button><button class="secondary" type="button" onclick="tapCopyLink()">Copy Link</button><small>Tap "Open in Safari" from the share menu</small></main><script>var tapTarget=${jsTarget};function tapShareBrowser(){if(navigator.share){navigator.share({url:tapTarget}).catch(function(){window.location.href=tapTarget;});return;}window.location.href=tapTarget;}function tapCopyLink(){function done(){var b=document.querySelector('.secondary');if(b)b.textContent='Copied!';}if(navigator.clipboard){navigator.clipboard.writeText(tapTarget).then(done).catch(copyFallback);return;}copyFallback();function copyFallback(){var t=document.createElement('textarea');t.value=tapTarget;t.style.cssText='position:fixed;opacity:0';document.body.appendChild(t);t.select();try{document.execCommand('copy');done();}catch(e){}document.body.removeChild(t);}}</script></body></html>`;
+  // Meta-family in-app browsers (Instagram, Facebook, Threads, TikTok) block the
+  // gesture-less auto-escape the trampoline relies on — on iOS it silently does
+  // nothing, on Android it left the page blank. Serve a real page with a tap
+  // button instead so the user can always escape with one tap.
+  const isMetaApp = /Instagram|FBAN|FBAV|FB_IAB|Threads|TikTok|BytedanceWebview/i.test(userAgent);
+  if (isMetaApp) {
+    return renderManualEscapePage(targetUrl, isIos, isAndroid);
   }
 
   return renderFastBrowserTrampoline(targetUrl, browserName, isAndroid, safeTarget);
+}
+
+// A never-blank escape card for in-app browsers that block automatic escape.
+// One clear tap launches an external browser: Chrome on Android (forced intent),
+// Chrome-then-Safari on iOS (prefers Chrome since many users set it as default).
+function renderManualEscapePage(targetUrl: string, isIos: boolean, isAndroid: boolean): string {
+  const jsTarget = JSON.stringify(targetUrl);
+  const safeTarget = escapeHtml(targetUrl);
+  const buttonLabel = isAndroid ? "Open in Chrome" : "Open in browser";
+  const menuHint = isAndroid ? "Open in Chrome" : "Open in external browser";
+  const styles =
+    "body{margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#fff;font-family:-apple-system,BlinkMacSystemFont,Inter,ui-sans-serif,system-ui,sans-serif}main{width:min(360px,calc(100vw - 40px));border:1px solid rgb(255 255 255 / .12);border-radius:18px;background:#1a1a2e;padding:24px;text-align:center;box-shadow:0 24px 80px rgb(0 0 0 / .5)}h1{margin:0 0 8px;font-size:20px}p{margin:0;color:rgb(255 255 255 / .62);font-size:14px;line-height:1.45}.primary,.secondary{display:flex;width:100%;min-height:46px;align-items:center;justify-content:center;border:0;border-radius:12px;font-weight:700;text-decoration:none;cursor:pointer;font-size:15px}.primary{margin-top:20px;background:#3b82f6;color:#fff}.secondary{margin-top:12px;background:rgb(255 255 255 / .06);color:rgb(255 255 255 / .82);border:1px solid rgb(255 255 255 / .12)}small{display:block;margin-top:14px;color:rgb(255 255 255 / .42);font-size:12px;line-height:1.4}";
+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(buttonLabel)}</title><style>${styles}</style></head><body><main><h1>${escapeHtml(buttonLabel)}</h1><p>This app's built-in browser can't open the link directly. Tap below to continue.</p><button class="primary" type="button" onclick="openExternal()">${escapeHtml(buttonLabel)}</button><button class="secondary" type="button" onclick="copyLink()">Copy link instead</button><small>Or tap the &#8943; menu in the top-right and choose &ldquo;${escapeHtml(menuHint)}&rdquo;.</small></main><script>
+var target=${jsTarget};
+function go(url){var a=document.createElement('a');a.href=url;a.rel='noreferrer';a.target='_self';document.body.appendChild(a);a.click();}
+function chromeScheme(u){return u.replace(/^https:\\/\\//,'googlechromes://').replace(/^http:\\/\\//,'googlechrome://');}
+function safariScheme(u){return 'x-safari-https://'+u.replace(/^https?:\\/\\//,'');}
+function androidIntent(u){var p=new URL(u);return 'intent://'+p.host+p.pathname+p.search+p.hash+'#Intent;scheme=https;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;package=com.android.chrome;S.browser_fallback_url='+encodeURIComponent(u)+';end';}
+function openExternal(){
+  ${
+    isAndroid
+      ? "try{go(androidIntent(target));}catch(e){window.location.href=target;}"
+      : isIos
+        ? "go(chromeScheme(target));setTimeout(function(){if(!document.hidden){go(safariScheme(target));}},600);"
+        : "window.location.href=target;"
+  }
+}
+function copyLink(){
+  var btn=document.querySelector('.secondary');
+  function done(){if(btn)btn.textContent='Link copied — paste in your browser';}
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(target).then(done).catch(fallback);return;}
+  fallback();
+  function fallback(){var t=document.createElement('textarea');t.value=target;t.style.cssText='position:fixed;opacity:0';document.body.appendChild(t);t.select();try{document.execCommand('copy');done();}catch(e){}document.body.removeChild(t);}
+}
+</script><noscript><p><a href="${safeTarget}">Open link</a></p></noscript></body></html>`;
 }
 
 export function previewFetchUrl(destination: string): string {
@@ -359,8 +398,6 @@ function renderFastBrowserTrampoline(targetUrl: string, browserName: string, isA
       if (search.indexOf('escaped=1') !== -1) return;
       var isIOS = /iPhone|iPad|iPod/i.test(ua);
       var isAndroid = /Android/i.test(ua);
-      var isInstagram = /Instagram/i.test(ua);
-      if (isInstagram && (isIOS || isAndroid)) return;
       var isDeepLink = /^\\/d-[a-zA-Z0-9_-]{3,64}$/.test(path);
       if (!isDeepLink) return;
       var code = path.substring(1);
@@ -403,7 +440,6 @@ function renderFastBrowserTrampoline(targetUrl: string, browserName: string, isA
       if (isIOS) {
         freshHtml += 'var w=uniqueUrl.replace(/^https?:\\\\/\\\\//,"");';
         freshHtml += 'tapOpen("x-safari-https://"+w);';
-        freshHtml += 'setTimeout(function(){window.location.href="com-apple-mobilesafari-tab:"+uniqueUrl;},200);';
       } else {
         freshHtml += 'try{openAndroidChrome(uniqueUrl);}';
         freshHtml += 'catch(e){window.location.href=androidChromeIntent(escapeUrl);}';
@@ -418,10 +454,7 @@ function renderFastBrowserTrampoline(targetUrl: string, browserName: string, isA
       freshHtml += 'b.onclick=function(ev){ev.preventDefault();';
       freshHtml += 'var u2=escapeUrl+"&_t="+Date.now()+Math.random().toString(36).substring(2,6);';
       if (isIOS) {
-        freshHtml += 'var rn=Math.random().toString(36).substring(2,10);';
-        freshHtml += 'window.location.href="shortcuts://x-callback-url/run-shortcut?name="+rn+"&x-error="+encodeURIComponent(u2);';
-        freshHtml += 'setTimeout(function(){tapOpen("x-safari-https://"+u2.replace(/^https?:\\\\/\\\\//,""));},100);';
-        freshHtml += 'setTimeout(function(){window.location.href="com-apple-mobilesafari-tab:"+u2;},250);';
+        freshHtml += 'tapOpen("x-safari-https://"+u2.replace(/^https?:\\\\/\\\\//,""));';
       } else {
         freshHtml += 'try{openAndroidChrome(u2);}catch(e2){window.location.href=androidChromeIntent(u2);}';
       }
