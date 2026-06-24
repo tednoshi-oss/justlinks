@@ -315,27 +315,39 @@ export function renderDeepLinkEscapePage(targetUrl: string, userAgent = ""): str
 function renderManualEscapePage(targetUrl: string, isIos: boolean, isAndroid: boolean): string {
   const jsTarget = JSON.stringify(targetUrl);
   const safeTarget = escapeHtml(targetUrl);
+  const heading = isAndroid ? "Open in Chrome" : "Open in your browser";
   const buttonLabel = isAndroid ? "Open in Chrome" : "Open in browser";
+  const desc = isAndroid
+    ? "Tap to open this link in Chrome."
+    : "Instagram won't open this link directly. Tap below, then choose Safari (or Chrome).";
   const menuHint = isAndroid ? "Open in Chrome" : "Open in external browser";
-  // How the escape is attempted, used both for the on-load auto-attempt and the
-  // manual button. Android: forced Chrome intent. iOS: Chrome first (many users
-  // default to it), Safari as a fallback shortly after.
+  // On-load auto-attempt (no user gesture). Android: forced Chrome intent. iOS:
+  // the URL schemes, which only succeed where Apple/Meta allow it (e.g. Chrome
+  // installed, older iOS). Where they're blocked the fallback card is revealed.
   const attemptBody = isAndroid
     ? "try{go(androidIntent(target));}catch(e){}"
     : isIos
       ? "go(chromeScheme(target));setTimeout(function(){if(!document.hidden){go(safariScheme(target));}},350);"
       : "window.location.href=target;";
+  // Manual button (after the card is revealed). On iOS the schemes are dead in
+  // Instagram's webview, so the native share sheet is the only thing that
+  // reliably escapes — it surfaces a real "Open in Safari"/"Open in Chrome".
+  const tapBody = isAndroid
+    ? "try{go(androidIntent(target));}catch(e){window.location.href=target;}"
+    : isIos
+      ? "if(navigator.share){navigator.share({url:target}).catch(function(){go(safariScheme(target));});return;}go(chromeScheme(target));go(safariScheme(target));"
+      : "window.location.href=target;";
   const styles =
     "*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#fff;font-family:-apple-system,BlinkMacSystemFont,Inter,ui-sans-serif,system-ui,sans-serif}main{width:min(360px,calc(100vw - 40px));text-align:center}#status{display:flex;flex-direction:column;align-items:center;gap:14px;color:rgb(255 255 255 / .7);font-size:14px}#status .sp{width:30px;height:30px;border-radius:50%;border:3px solid rgb(255 255 255 / .15);border-top-color:#3b82f6;animation:sp .8s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}#card{display:none;border:1px solid rgb(255 255 255 / .12);border-radius:18px;background:#1a1a2e;padding:24px;box-shadow:0 24px 80px rgb(0 0 0 / .5)}h1{margin:0 0 8px;font-size:20px}p{margin:0;color:rgb(255 255 255 / .62);font-size:14px;line-height:1.45}.primary,.secondary{display:flex;width:100%;min-height:46px;align-items:center;justify-content:center;border:0;border-radius:12px;font-weight:700;text-decoration:none;cursor:pointer;font-size:15px}.primary{margin-top:20px;background:#3b82f6;color:#fff}.secondary{margin-top:12px;background:rgb(255 255 255 / .06);color:rgb(255 255 255 / .82);border:1px solid rgb(255 255 255 / .12)}small{display:block;margin-top:14px;color:rgb(255 255 255 / .42);font-size:12px;line-height:1.4}";
 
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Opening browser…</title><style>${styles}</style></head><body><main><div id="status"><div class="sp"></div><div>Opening your browser…</div></div><div id="card"><h1>${escapeHtml(buttonLabel)}</h1><p>This app's built-in browser blocked the link. Tap to continue.</p><button class="primary" type="button" onclick="openExternal()">${escapeHtml(buttonLabel)}</button><button class="secondary" type="button" onclick="copyLink()">Copy link instead</button><small>Or tap the &#8943; menu in the top-right and choose &ldquo;${escapeHtml(menuHint)}&rdquo;.</small></div></main><script>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Opening browser…</title><style>${styles}</style></head><body><main><div id="status"><div class="sp"></div><div>Opening your browser…</div></div><div id="card"><h1>${escapeHtml(heading)}</h1><p>${escapeHtml(desc)}</p><button class="primary" type="button" onclick="openExternal()">${escapeHtml(buttonLabel)}</button><button class="secondary" type="button" onclick="copyLink()">Copy link instead</button><small>Or tap the &#8943; menu in the top-right and choose &ldquo;${escapeHtml(menuHint)}&rdquo;.</small></div></main><script>
 var target=${jsTarget};
 function go(url){var a=document.createElement('a');a.href=url;a.rel='noreferrer';a.target='_self';document.body.appendChild(a);a.click();}
 function chromeScheme(u){return u.replace(/^https:\\/\\//,'googlechromes://').replace(/^http:\\/\\//,'googlechrome://');}
 function safariScheme(u){return 'x-safari-https://'+u.replace(/^https?:\\/\\//,'');}
 function androidIntent(u){var p=new URL(u);return 'intent://'+p.host+p.pathname+p.search+p.hash+'#Intent;scheme=https;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;package=com.android.chrome;S.browser_fallback_url='+encodeURIComponent(u)+';end';}
 function attempt(){${attemptBody}}
-function openExternal(){attempt();}
+function openExternal(){${tapBody}}
 function reveal(){var s=document.getElementById('status'),c=document.getElementById('card');if(s)s.style.display='none';if(c)c.style.display='block';}
 function copyLink(){
   var btn=document.querySelector('.secondary');

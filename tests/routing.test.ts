@@ -85,9 +85,12 @@ test("Instagram iOS auto-attempts escape on load, prefers Chrome then Safari, ne
   // Fires the escape automatically on load, then reveals the fallback card only if still here.
   assert.match(html, /attempt\(\);\s*<\/script>/);
   assert.match(html, /setTimeout\(reveal,\s*\d+\)/);
-  // Tapping (and the auto-attempt) launch Chrome first, then fall back to Safari.
+  // Auto-attempt uses the URL schemes (works where the OS allows it).
   assert.match(html, /googlechromes:\/\//);
   assert.match(html, /x-safari-https:\/\//);
+  // The manual button uses the native share sheet — the only thing that reliably
+  // escapes iOS Instagram once the schemes are blocked.
+  assert.match(html, /navigator\.share/);
   // No dead schemes.
   assert.doesNotMatch(html, /com-apple-mobilesafari-tab/);
   assert.doesNotMatch(html, /shortcuts:\/\/x-callback-url/);
