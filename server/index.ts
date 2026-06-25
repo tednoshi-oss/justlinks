@@ -41,7 +41,7 @@ import {
 import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
 import { sendPasswordResetEmail } from "./email.js";
 import { classifyReferrer, cleanSlug, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
-import { deepLinkEscapeUrl, effectiveCountryFilter, isCountryBlocked, isEscapedBrowserRequest, isHttpUrl, isInstagramInAppBrowser, isLinkPreviewBot, isMobileDevice, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDeepLinkEscapePage, renderLinkPreviewPage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape, toEdgeLink, type EdgeClickEvent } from "../shared/edge.js";
+import { deepLinkEscapeUrl, effectiveCountryFilter, isCountryBlocked, isEscapedBrowserRequest, isHttpUrl, isInstagramInAppBrowser, isLinkPreviewBot, isMobileDevice, makeRedirectToken, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDecoyPage, renderDeepLinkEscapePage, renderLinkPreviewPage, renderStealthInterstitialPage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldShowAgeGate, shouldUseBrowserEscape, STEALTH_HEADERS, toEdgeLink, verifyRedirectToken, type EdgeClickEvent } from "../shared/edge.js";
 import type { ApiKeyPermission, AuthUser, ClickEvent, LinkGroup, SmartLink } from "../shared/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -514,6 +514,55 @@ app.get("/api/analytics", async (request, response, next) => {
   }
 });
 
+function redirectSecret(): string | null {
+  return process.env.EDGE_SYNC_SECRET || null;
+}
+
+// POST /__open — verifies the signed token, re-checks status + country, records
+// the click, and returns the real destination to a human past the age gate.
+app.post("/__open", async (request, response, next) => {
+  try {
+    const secret = redirectSecret();
+    const slug = typeof request.body?.s === "string" ? request.body.s : "";
+    const token = typeof request.body?.t === "string" ? request.body.t : "";
+    response.set(STEALTH_HEADERS);
+    if (!secret || !slug || !token) {
+      response.status(400).json({ error: "unavailable" });
+      return;
+    }
+    if (!(await verifyRedirectToken(secret, slug, token, Date.now()))) {
+      response.status(403).json({ error: "expired" });
+      return;
+    }
+    const link = await findLinkBySlug(slug);
+    if (!link || link.status !== "active") {
+      response.status(404).json({ error: "unavailable" });
+      return;
+    }
+    const country = normalizeCountryCode(request.get("cf-ipcountry") || request.get("x-vercel-ip-country") || "");
+    const linkGroup = link.groupId ? await findGroupById(link.groupId, link.userId) : null;
+    const effectiveFilter = effectiveCountryFilter(link, linkGroup ?? null);
+    if (isCountryBlocked(effectiveFilter, country)) {
+      response.status(451).json({ error: "unavailable" });
+      return;
+    }
+    const userAgent = request.get("user-agent") || "";
+    const device = detectDevice(userAgent, String(request.query.target || ""));
+    const webDestination = selectWebFallback(link);
+    const browserEscape = shouldUseBrowserEscape(link);
+    const destination = browserEscape ? webDestination : selectDestination(link, device);
+    if (!destination) {
+      response.status(404).json({ error: "unavailable" });
+      return;
+    }
+    // The click was already recorded at the interstitial GET; resolve only hands
+    // the verified human the destination (replaying the token can't inflate clicks).
+    response.json({ u: destination });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/l/:slug", redirectSlug);
 app.get("/:slug", (request, response, next) => {
   const reserved = new Set(["dashboard", "api", "assets", "favicon.png", "reset", "forgot"]);
@@ -527,18 +576,10 @@ app.get("/:slug", (request, response, next) => {
 async function redirectSlug(request: express.Request, response: express.Response, next: express.NextFunction) {
   try {
     const userAgent = request.get("user-agent") || "";
-    if (isLinkPreviewBot(userAgent) && !isEscapedBrowserRequest(new URLSearchParams(request.query as Record<string, string>))) {
-      const link = await findLinkBySlug(request.params.slug);
-      if (!link || link.status !== "active") {
-        response.status(404).send(renderMissingLink());
-        return;
-      }
-      response.set({
-        "Cache-Control": "public, max-age=600",
-        "Referrer-Policy": "strict-origin-when-cross-origin",
-        "X-Content-Type-Options": "nosniff"
-      });
-      response.status(200).send(await renderPreviewForLink(link, absoluteRequestUrl(request)));
+    // #3 Full decoy: every bot/scanner gets a benign page with no destination.
+    if (isLinkPreviewBot(userAgent)) {
+      response.set(STEALTH_HEADERS);
+      response.status(200).send(renderDecoyPage());
       return;
     }
 
@@ -579,9 +620,28 @@ async function redirectSlug(request: express.Request, response: express.Response
     }
 
     const device = detectDevice(userAgent, String(request.query.target || ""));
-    const browser = detectBrowser(userAgent);
     const webDestination = selectWebFallback(link);
     const browserEscape = shouldUseBrowserEscape(link);
+
+    // #8 Manual escape card for in-app browsers (not yet escaped, excluding Instagram).
+    if (
+      browserEscape &&
+      isHttpUrl(webDestination) &&
+      isMobileDevice(device) &&
+      !isInstagramInAppBrowser(userAgent) &&
+      !isEscapedBrowserRequest(new URLSearchParams(request.query as Record<string, string>))
+    ) {
+      response.set({
+        "Cache-Control": "no-cache, must-revalidate, max-age=0",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "X-Content-Type-Options": "nosniff"
+      });
+      response.status(200).send(renderDeepLinkEscapePage(deepLinkEscapeUrl(absoluteRequestUrl(request)), userAgent));
+      return;
+    }
+
+    // Record the click here (the actual tap) so the real source referrer is kept,
+    // and so replaying the resolve token can't inflate click counts.
     const destination = browserEscape ? webDestination : selectDestination(link, device);
     const clickEvent: ClickEvent = {
       id: crypto.randomUUID(),
@@ -589,29 +649,27 @@ async function redirectSlug(request: express.Request, response: express.Response
       slug: link.slug,
       occurredAt: new Date().toISOString(),
       device,
-      browser,
+      browser: detectBrowser(userAgent),
       country: country || "Unknown",
       referrer: classifyReferrer(request.get("referer")),
-      visitorKey: hashVisitor(`${clientIp(request)}:${request.get("user-agent") || ""}`),
+      visitorKey: hashVisitor(`${clientIp(request)}:${userAgent}`),
       destination
     };
-
     void addClickEvent(clickEvent).catch((error) => {
       console.error("Failed to record click", error);
     });
 
-    // Instagram traffic is intentionally left to open in its in-app browser (no
-    // escape page) for now; Reddit and other sources still auto-escape.
-    if (browserEscape && isHttpUrl(webDestination) && isMobileDevice(device) && !isInstagramInAppBrowser(userAgent)) {
-      if (isEscapedBrowserRequest(new URLSearchParams(request.query as Record<string, string>))) {
-        response.redirect(302, webDestination);
-        return;
-      }
-      response.status(200).send(renderDeepLinkEscapePage(deepLinkEscapeUrl(absoluteRequestUrl(request)), userAgent));
+    // #1/#4/#7/#9/#10 Stealth interstitial — no destination in the HTML, only a
+    // signed 15m token resolved at POST /__open. Fail safe to a normal redirect if
+    // EDGE_SYNC_SECRET is unset (never sign tokens with a guessable constant).
+    const secret = redirectSecret();
+    if (!secret) {
+      response.redirect(302, destination);
       return;
     }
-
-    response.redirect(302, destination);
+    const token = await makeRedirectToken(secret, request.params.slug, Date.now());
+    response.set(STEALTH_HEADERS);
+    response.status(200).send(renderStealthInterstitialPage(request.params.slug, token, shouldShowAgeGate(userAgent)));
   } catch (error) {
     next(error);
   }

@@ -259,6 +259,101 @@ export function isInstagramInAppBrowser(userAgent = ""): boolean {
   return /instagram/i.test(userAgent);
 }
 
+// 18+ age gate toggle. It is shown only to Instagram traffic (which opens links
+// in-app, so the gate is reached there); Reddit and other sources have already
+// escaped to a real browser by the time they hit the interstitial, so they skip
+// it. Set AGE_GATE_ENABLED = false to turn the gate off everywhere.
+export const AGE_GATE_ENABLED = true;
+export function shouldShowAgeGate(userAgent = ""): boolean {
+  return AGE_GATE_ENABLED && isInstagramInAppBrowser(userAgent);
+}
+
+// Headers applied to all redirect-path responses (decoy, interstitial, resolve):
+// no-referrer so the destination never learns the source, noindex so the link
+// pages never show up in search, nosniff, and no caching.
+export const STEALTH_HEADERS: Record<string, string> = {
+  "Cache-Control": "no-store, max-age=0",
+  "Referrer-Policy": "no-referrer",
+  "X-Content-Type-Options": "nosniff",
+  "X-Robots-Tag": "noindex, nofollow"
+};
+
+// --- Signed short-lived redirect tokens ---------------------------------------
+// The destination URL is never written into the page a scraper can fetch. The
+// page only carries a short-lived (15m) HMAC token bound to the slug; the real
+// URL is resolved server-side at POST /__open and only then handed to a human.
+const REDIRECT_TOKEN_TTL_MS = 15 * 60 * 1000;
+
+async function hmacHex(secret: string, message: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(message));
+  return Array.from(new Uint8Array(signature)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function constantTimeEquals(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i += 1) result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return result === 0;
+}
+
+export async function makeRedirectToken(secret: string, slug: string, nowMs: number, ttlMs: number = REDIRECT_TOKEN_TTL_MS): Promise<string> {
+  const expiry = nowMs + ttlMs;
+  const signature = await hmacHex(secret, `${slug}.${expiry}`);
+  return `${expiry}.${signature}`;
+}
+
+export async function verifyRedirectToken(secret: string, slug: string, token: string, nowMs: number): Promise<boolean> {
+  if (!token) return false;
+  const separator = token.indexOf(".");
+  if (separator < 1) return false;
+  const expiry = Number(token.slice(0, separator));
+  const signature = token.slice(separator + 1);
+  if (!Number.isFinite(expiry) || expiry < nowMs) return false;
+  const expected = await hmacHex(secret, `${slug}.${expiry}`);
+  return constantTimeEquals(expected, signature);
+}
+
+// Benign page served to every bot / scanner (#3 full decoy). It carries no
+// destination, no real metadata, and noindex — so platform crawlers that fetch a
+// link can't see where it actually goes.
+export function renderDecoyPage(): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>My Links</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0b10;color:#e8e8ef;font-family:-apple-system,BlinkMacSystemFont,Inter,ui-sans-serif,system-ui,sans-serif}main{width:min(420px,calc(100vw - 32px));text-align:center;padding:28px}h1{margin:0 0 10px;font-size:22px}p{margin:0;color:#9a9aa6;line-height:1.5}</style></head><body><main><h1>Welcome 👋</h1><p>Thanks for stopping by — this page is just getting set up. Check back soon.</p></main></body></html>`;
+}
+
+// Human-facing interstitial (#1/#4/#7/#9/#10). Contains NO destination URL — only
+// a signed token. It wipes the query string, shows an 18+ age gate, then POSTs the
+// token to /__open to get the real URL and navigate. Remembered visitors skip the
+// gate. Without JS (most scrapers) nothing resolves.
+export function renderStealthInterstitialPage(slug: string, token: string, ageGate = false): string {
+  // Escape "<" so an embedded "</script>" can never break out of the inline script
+  // (defense-in-depth; slugs/tokens are already character-constrained upstream).
+  const jsSlug = JSON.stringify(slug).replace(/</g, "\\u003c");
+  const jsToken = JSON.stringify(token).replace(/</g, "\\u003c");
+  const styles =
+    "*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0b10;color:#f2f2f3;font-family:-apple-system,BlinkMacSystemFont,Inter,ui-sans-serif,system-ui,sans-serif}main{width:min(380px,calc(100vw - 32px));text-align:center}#gate{border:1px solid rgb(255 255 255 / .12);border-radius:18px;background:#15151c;padding:26px;box-shadow:0 24px 80px rgb(0 0 0 / .5)}h1{margin:0 0 8px;font-size:21px}p{margin:0;color:rgb(255 255 255 / .62);font-size:14px;line-height:1.5}.primary,.secondary{display:flex;width:100%;min-height:48px;align-items:center;justify-content:center;border:0;border-radius:12px;font-weight:700;font-size:15px;cursor:pointer}.primary{margin-top:20px;background:#3b82f6;color:#fff}.secondary{margin-top:10px;background:rgb(255 255 255 / .06);color:rgb(255 255 255 / .8)}#s{flex-direction:column;align-items:center;gap:14px;color:rgb(255 255 255 / .7);font-size:14px}#s .sp{width:30px;height:30px;border-radius:50%;border:3px solid rgb(255 255 255 / .15);border-top-color:#3b82f6;animation:sp .8s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}";
+  // With the gate: show the 18+ modal, spinner hidden until they confirm (or a
+  // remembered visitor auto-proceeds). Without the gate: just the spinner, and
+  // proceed immediately on load.
+  const gateBlock = ageGate
+    ? `<div id="gate"><h1>Are you 18 or older?</h1><p>You must be 18+ to view this content.</p><button class="primary" type="button" onclick="age(true)">Yes, I'm 18 or older</button><button class="secondary" type="button" onclick="age(false)">No</button></div>`
+    : "";
+  const statusStyle = ageGate ? "display:none" : "display:flex";
+  const initJs = ageGate
+    ? `var remembered=false;try{remembered=localStorage.getItem('ts_age_ok')==='1';}catch(e){}if(remembered){proceed();}`
+    : `proceed();`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer"><title>Continue</title><style>${styles}</style></head><body><main>${gateBlock}<div id="s" style="${statusStyle}"><div class="sp"></div><div>Opening…</div></div></main><script>
+try{history.replaceState({},'',location.pathname);}catch(e){}
+var slug=${jsSlug},token=${jsToken},done=false;
+function fail(m){var s=document.getElementById('s');if(s){s.innerHTML='<div>'+(m||'This link is unavailable.')+'</div>';s.style.display='flex';}var g=document.getElementById('gate');if(g)g.style.display='none';}
+function show(){var g=document.getElementById('gate');if(g)g.style.display='none';var s=document.getElementById('s');if(s)s.style.display='flex';}
+function proceed(){if(done)return;done=true;show();fetch('/__open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({s:slug,t:token})}).then(function(r){return r.json();}).then(function(d){if(d&&d.u){location.replace(d.u);}else{fail(d&&d.error==='expired'?'This link expired — please reopen it.':null);}}).catch(function(){fail();});}
+function age(ok){if(ok){try{localStorage.setItem('ts_age_ok','1');}catch(e){}proceed();}else{var g=document.getElementById('gate');if(g)g.innerHTML='<h1>Sorry</h1><p>You must be 18 or older to view this content.</p>';}}
+${initJs}
+</script></body></html>`;
+}
+
 export function isEscapedBrowserRequest(searchParams: URLSearchParams): boolean {
   return searchParams.get("escaped") === "1";
 }

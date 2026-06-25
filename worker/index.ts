@@ -16,10 +16,16 @@ import {
   previewFetchUrl,
   renderCountryBlockedPage,
   renderDeepLinkEscapePage,
+  renderDecoyPage,
+  renderStealthInterstitialPage,
   renderLinkPreviewPage,
   selectWebFallback,
   selectDestination,
   isInstagramInAppBrowser,
+  shouldShowAgeGate,
+  makeRedirectToken,
+  verifyRedirectToken,
+  STEALTH_HEADERS,
   shouldServeFastDeepLinkEscape,
   shouldUseBrowserEscape,
   slugFromPath
@@ -63,6 +69,10 @@ export default {
       return handleEdgeSyncRequest(request, env, url);
     }
 
+    if (url.pathname === "/__open") {
+      return handleResolveRequest(request, env, context, url);
+    }
+
     if (url.pathname === "/debug/open" || url.pathname.startsWith("/debug/open/")) {
       return handleDebugOpenRequest(url);
     }
@@ -79,12 +89,13 @@ export default {
     if (!slug) return notFound();
 
     const userAgent = request.headers.get("user-agent") || "";
-    if (isLinkPreviewBot(userAgent) && !isEscapedBrowserRequest(url.searchParams)) {
-      const previewLink = await getEdgeLink(slug, env, context);
-      if (!previewLink || previewLink.status !== "active") return notFound();
-      return htmlResponse(await renderPreviewForLink(previewLink, request.url), 200, previewHeaders());
+
+    // #3 Full decoy: every bot/scanner gets a benign page with no destination.
+    if (isLinkPreviewBot(userAgent)) {
+      return htmlResponse(renderDecoyPage(), 200, STEALTH_HEADERS);
     }
 
+    // #8 In-app auto-escape trampoline (Reddit/Telegram etc.); Instagram handled below.
     if (
       shouldServeFastDeepLinkEscape({
         pathname: url.pathname,
@@ -103,35 +114,42 @@ export default {
     if (isCountryBlocked(link, country)) {
       return new Response(renderCountryBlockedPage(country), {
         status: 451,
-        headers: {
-          "Content-Type": "text/html; charset=utf-8",
-          "Cache-Control": "no-store",
-          "Referrer-Policy": "strict-origin-when-cross-origin",
-          "X-Content-Type-Options": "nosniff"
-        }
+        headers: { "Content-Type": "text/html; charset=utf-8", ...STEALTH_HEADERS }
       });
     }
 
     const device = detectDevice(userAgent, url.searchParams.get("target") || "");
     const webDestination = selectWebFallback(link);
     const browserEscape = shouldUseBrowserEscape(link);
+
+    // #8 Manual escape card for in-app browsers (not yet escaped, excluding Instagram).
+    if (
+      browserEscape &&
+      isHttpUrl(webDestination) &&
+      isMobileDevice(device) &&
+      !isInstagramInAppBrowser(userAgent) &&
+      !isEscapedBrowserRequest(url.searchParams)
+    ) {
+      return htmlResponse(renderDeepLinkEscapePage(deepLinkEscapeUrl(request.url), userAgent), 200, noCacheHeaders());
+    }
+
+    // Record the click here (the actual tap) so the real source referrer is kept,
+    // and so replaying the resolve token can't inflate click counts.
     const destination = browserEscape ? webDestination : selectDestination(link, device);
     const click = await buildClickEvent(request, link, destination, device);
-
     if (env.TAPSOCIALS_CLICK_QUEUE) {
       context.waitUntil(env.TAPSOCIALS_CLICK_QUEUE.send(click));
     } else {
       context.waitUntil(sendClickBatchToDashboard([click], env));
     }
 
-    // Instagram traffic is intentionally left to open in its in-app browser (no
-    // escape page) for now; Reddit and other sources still auto-escape.
-    if (browserEscape && isHttpUrl(webDestination) && isMobileDevice(device) && !isInstagramInAppBrowser(userAgent)) {
-      if (isEscapedBrowserRequest(url.searchParams)) return Response.redirect(webDestination, 302);
-      return htmlResponse(renderDeepLinkEscapePage(deepLinkEscapeUrl(request.url), userAgent), 200, noCacheHeaders());
-    }
-
-    return Response.redirect(destination, 302);
+    // #1/#4/#7/#9/#10 Stealth interstitial — no destination in the HTML, only a
+    // signed 15m token resolved at POST /__open. Fail safe to a normal redirect if
+    // EDGE_SYNC_SECRET is unset (never sign tokens with a guessable constant).
+    const secret = tokenSecret(env);
+    if (!secret) return destination ? Response.redirect(destination, 302) : notFound();
+    const token = await makeRedirectToken(secret, slug, Date.now());
+    return htmlResponse(renderStealthInterstitialPage(slug, token, shouldShowAgeGate(userAgent)), 200, STEALTH_HEADERS);
   },
 
   async queue(batch: MessageBatch<EdgeClickEvent>, env: Env): Promise<void> {
@@ -375,6 +393,44 @@ async function pruneMissingLinks(expectedKeys: Set<string>, env: Env): Promise<n
   return deleted;
 }
 
+function tokenSecret(env: Env): string | null {
+  return env.EDGE_SYNC_SECRET || null;
+}
+
+// POST /__open — the only place the real destination is produced. Verifies the
+// signed token, re-checks status + country, records the click, and returns the
+// destination URL to a human who passed the age gate. GET/scrapers get nothing.
+async function handleResolveRequest(request: Request, env: Env, context: ExecutionContext, url: URL): Promise<Response> {
+  if (request.method !== "POST") return jsonResponse({ error: "method" }, 405, STEALTH_HEADERS);
+
+  const secret = tokenSecret(env);
+  const body = await readJson<{ s?: string; t?: string }>(request);
+  const slug = typeof body?.s === "string" ? body.s : "";
+  const token = typeof body?.t === "string" ? body.t : "";
+  if (!secret || !slug || !token) return jsonResponse({ error: "unavailable" }, 400, STEALTH_HEADERS);
+
+  if (!(await verifyRedirectToken(secret, slug, token, Date.now()))) {
+    return jsonResponse({ error: "expired" }, 403, STEALTH_HEADERS);
+  }
+
+  const link = await getEdgeLink(slug, env, context);
+  if (!link || link.status !== "active") return jsonResponse({ error: "unavailable" }, 404, STEALTH_HEADERS);
+
+  const country = normalizeCountryCode(request.headers.get("cf-ipcountry"));
+  if (isCountryBlocked(link, country)) return jsonResponse({ error: "unavailable" }, 451, STEALTH_HEADERS);
+
+  const userAgent = request.headers.get("user-agent") || "";
+  const device = detectDevice(userAgent, url.searchParams.get("target") || "");
+  const webDestination = selectWebFallback(link);
+  const browserEscape = shouldUseBrowserEscape(link);
+  const destination = browserEscape ? webDestination : selectDestination(link, device);
+  if (!destination) return jsonResponse({ error: "unavailable" }, 404, STEALTH_HEADERS);
+
+  // The click was already recorded at the interstitial GET; resolve only hands the
+  // verified human the destination (so replaying the token can't inflate clicks).
+  return jsonResponse({ u: destination }, 200, STEALTH_HEADERS);
+}
+
 async function getEdgeLink(slug: string, env: Env, context: ExecutionContext): Promise<EdgeLinkConfig | null> {
   const cached = await env.TAPSOCIALS_LINKS.get<EdgeLinkConfig>(`link:${slug}`, { type: "json" });
   if (cached) return cached;
@@ -521,10 +577,10 @@ async function readJson<T>(request: Request): Promise<T | null> {
   }
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, status = 200, extraHeaders: HeadersInit = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8" }
+    headers: { "Content-Type": "application/json; charset=utf-8", ...extraHeaders }
   });
 }
 

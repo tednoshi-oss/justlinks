@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SmartLink } from "../shared/types.js";
-import { androidExternalBrowserIntent, deepLinkEscapeUrl, effectiveCountryFilter, externalBrowserEscapeAttemptUrl, isCountryBlocked, isEscapedBrowserRequest, isInAppBrowser, isInstagramInAppBrowser, isLinkPreviewBot, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDeepLinkEscapePage, renderLinkPreviewPage, shouldServeFastDeepLinkEscape, shouldUseBrowserEscape } from "../shared/edge.js";
+import { androidExternalBrowserIntent, deepLinkEscapeUrl, effectiveCountryFilter, externalBrowserEscapeAttemptUrl, isCountryBlocked, isEscapedBrowserRequest, isInAppBrowser, isInstagramInAppBrowser, isLinkPreviewBot, makeRedirectToken, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDecoyPage, renderDeepLinkEscapePage, renderLinkPreviewPage, renderStealthInterstitialPage, shouldServeFastDeepLinkEscape, shouldShowAgeGate, shouldUseBrowserEscape, STEALTH_HEADERS, verifyRedirectToken } from "../shared/edge.js";
 import { cleanSlug, detectDevice, selectDestination } from "../server/routing.js";
 
 const link: SmartLink = {
@@ -82,6 +82,57 @@ test("Instagram in-app browser is detected so its traffic skips the escape page 
   assert.equal(isInstagramInAppBrowser("Mozilla/5.0 (Linux; Android 14) FBAN/FB4A;FBAV/450"), false);
   assert.equal(isInstagramInAppBrowser("Mozilla/5.0 (iPhone) BytedanceWebview/d8a21c TikTok 32"), false);
   assert.equal(isInstagramInAppBrowser(""), false);
+});
+
+test("signed redirect tokens: round-trip, slug-bound, expiry, tamper, wrong secret", async () => {
+  const secret = "unit-test-secret";
+  const now = 1_700_000_000_000;
+  const token = await makeRedirectToken(secret, "d-abc", now);
+  assert.equal(await verifyRedirectToken(secret, "d-abc", token, now), true);
+  assert.equal(await verifyRedirectToken(secret, "d-abc", token, now + 14 * 60 * 1000), true); // still inside 15m
+  assert.equal(await verifyRedirectToken(secret, "d-abc", token, now + 16 * 60 * 1000), false); // expired
+  assert.equal(await verifyRedirectToken(secret, "d-other", token, now), false); // bound to slug
+  assert.equal(await verifyRedirectToken("wrong-secret", "d-abc", token, now), false); // bound to secret
+  assert.equal(await verifyRedirectToken(secret, "d-abc", `${token}x`, now), false); // tampered signature
+  assert.equal(await verifyRedirectToken(secret, "d-abc", "", now), false);
+  assert.equal(await verifyRedirectToken(secret, "d-abc", "notatoken", now), false);
+});
+
+test("decoy page served to bots is benign: no destination, noindex, no adult signals", () => {
+  const html = renderDecoyPage();
+  assert.match(html, /noindex/);
+  assert.doesNotMatch(html, /https?:\/\//); // no URLs at all
+  assert.doesNotMatch(html, /fanvue|onlyfans|fv-/i); // no destination hints
+});
+
+test("stealth interstitial hides the destination behind a token; age gate is optional", async () => {
+  const token = await makeRedirectToken("s", "d-abc", 1700000000000);
+  // Common stealth properties regardless of the gate.
+  const withGate = renderStealthInterstitialPage("d-abc", token, true);
+  const noGate = renderStealthInterstitialPage("d-abc", token, false);
+  for (const html of [withGate, noGate]) {
+    assert.match(html, /noindex/); // #7
+    assert.match(html, /history\.replaceState/); // #10 query wipe
+    assert.match(html, /\/__open/); // resolves via POST, not in the HTML
+    assert.ok(html.includes(token)); // carries the signed token
+    assert.doesNotMatch(html, /fanvue|onlyfans/i); // never the real URL
+  }
+  // The visible gate prompt only appears when requested (#9 optional).
+  assert.match(withGate, /Are you 18 or older\?/);
+  assert.doesNotMatch(noGate, /Are you 18 or older\?/);
+});
+
+test("age gate shows for Instagram traffic only, not Reddit (and is globally toggleable)", () => {
+  assert.equal(shouldShowAgeGate("Mozilla/5.0 (iPhone) Instagram 300.0.0.0"), true);
+  assert.equal(shouldShowAgeGate("Mozilla/5.0 (iPhone) Reddit/2026"), false);
+  assert.equal(shouldShowAgeGate("Mozilla/5.0 (Macintosh) Safari/605"), false); // escaped/external browser
+  assert.equal(shouldShowAgeGate(""), false);
+});
+
+test("STEALTH_HEADERS enforce no-referrer + noindex on redirect-path responses", () => {
+  assert.equal(STEALTH_HEADERS["Referrer-Policy"], "no-referrer");
+  assert.match(STEALTH_HEADERS["X-Robots-Tag"], /noindex/);
+  assert.match(STEALTH_HEADERS["Cache-Control"], /no-store/);
 });
 
 test("Facebook/TikTok in-app browsers still get the manual escape card (never blank)", () => {
