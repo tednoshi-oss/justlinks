@@ -110,6 +110,19 @@ export function App() {
     void refresh(days);
   }, [days, authUser]);
 
+  // Keep analytics fresh: silently re-fetch every 20s and whenever the tab regains
+  // focus, so newly-recorded clicks show up promptly instead of only on reload.
+  useEffect(() => {
+    if (!authUser || authUser.status !== "approved") return;
+    const interval = window.setInterval(() => void refresh(days, true), 20000);
+    const onFocus = () => void refresh(days, true);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [days, authUser]);
+
   useEffect(() => {
     if (!authUser || authUser.status !== "approved" || view !== "api") return;
     void refreshApiKeys();
@@ -120,9 +133,9 @@ export function App() {
     void refreshTeamMembers();
   }, [authUser, view]);
 
-  async function refresh(nextDays = days) {
+  async function refresh(nextDays = days, silent = false) {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       setError(null);
       const [summaryData, linksData, analyticsData, groupsData] = await Promise.all([
         api.summary(),
@@ -137,12 +150,12 @@ export function App() {
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Unable to load dashboard.";
       if (message.includes("Authentication required")) {
-        setError("Your session could not be verified for that request. Please refresh the page and try again.");
+        if (!silent) setError("Your session could not be verified for that request. Please refresh the page and try again.");
         return;
       }
-      setError(message);
+      if (!silent) setError(message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 

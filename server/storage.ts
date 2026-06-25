@@ -90,6 +90,7 @@ const dataFile = path.join(dataDir, "store.json");
 let cachedStore: StoreShape | null = null;
 let slugIndex: Map<string, SmartLink> | null = null;
 let persistTimer: NodeJS.Timeout | null = null;
+let persistCounter = 0;
 
 const seedGroups: LinkGroup[] = [
   { id: "campaign", name: "Campaign", color: "#6366f1" },
@@ -176,9 +177,32 @@ const seedLinks: SmartLink[] = [
 export async function getStore(): Promise<StoreShape> {
   if (cachedStore) return cachedStore;
 
+  let raw: string | null = null;
   try {
-    const raw = await fs.readFile(dataFile, "utf-8");
-    const parsed = JSON.parse(raw) as Partial<StoreShape>;
+    raw = await fs.readFile(dataFile, "utf-8");
+  } catch {
+    raw = null; // first run — the store file doesn't exist yet
+  }
+
+  if (raw !== null) {
+    let parsed: Partial<StoreShape>;
+    try {
+      parsed = JSON.parse(raw) as Partial<StoreShape>;
+    } catch (error) {
+      // The file exists but is unparseable. Do NOT re-seed over it — that would
+      // wipe real clicks. Preserve it for recovery and start from an empty store
+      // (with atomic writes this path should now be unreachable in practice).
+      const backup = `${dataFile}.corrupt.${Date.now()}`;
+      try {
+        await fs.rename(dataFile, backup);
+      } catch {
+        // ignore — best effort
+      }
+      console.error(`store.json was unparseable; backed up to ${backup} to avoid overwriting recoverable data.`, error);
+      cachedStore = { links: [], groups: [], events: [], users: [], sessions: [], apiKeys: [], passwordResets: [] };
+      await persistStore(cachedStore);
+      return cachedStore;
+    }
     cachedStore = {
       links: parsed.links || seedLinks,
       groups: parsed.groups || seedGroups,
@@ -192,20 +216,43 @@ export async function getStore(): Promise<StoreShape> {
     if (ensureUserAccess(cachedStore)) {
       await persistStore(cachedStore);
     }
-  } catch {
-    cachedStore = {
-      links: seedLinks,
-      groups: seedGroups,
-      events: buildSeedEvents(seedLinks),
-      users: [],
-      sessions: [],
-      apiKeys: [],
-      passwordResets: []
-    };
-    await persistStore(cachedStore);
+    return cachedStore;
   }
 
+  // First run: no store file yet — seed it.
+  cachedStore = {
+    links: seedLinks,
+    groups: seedGroups,
+    events: buildSeedEvents(seedLinks),
+    users: [],
+    sessions: [],
+    apiKeys: [],
+    passwordResets: []
+  };
+  await persistStore(cachedStore);
   return cachedStore;
+}
+
+// Flush any debounced changes to disk on shutdown (Render sends SIGTERM on
+// redeploy) so the most recent clicks aren't lost with the in-memory store.
+let flushing = false;
+async function flushStoreOnExit(signal: NodeJS.Signals): Promise<void> {
+  if (flushing) return;
+  flushing = true;
+  try {
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    if (cachedStore) await persistStore(cachedStore);
+  } catch (error) {
+    console.error("Failed to flush store on exit", error);
+  } finally {
+    process.exit(signal === "SIGINT" ? 130 : 0);
+  }
+}
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.once(signal, () => void flushStoreOnExit(signal));
 }
 
 export async function listApiKeys(userId: string): Promise<ApiKeySummary[]> {
@@ -538,6 +585,9 @@ export async function addClickEvent(event: ClickEvent): Promise<void> {
   // Drop clicks for links that no longer exist (e.g. an edge-queued click that
   // lands after the link was deleted) so nothing from a deleted link is stored.
   if (!store.links.some((link) => link.id === event.linkId)) return;
+  // Idempotent: the Cloudflare Queue delivers at-least-once, so the same click
+  // (same id) can arrive more than once — never count it twice.
+  if (store.events.some((existing) => existing.id === event.id)) return;
   store.events.unshift(withEventOwner(store, event));
   store.events = store.events.slice(0, 100000);
   schedulePersist(store);
@@ -547,7 +597,15 @@ export async function addClickEvents(events: ClickEvent[]): Promise<void> {
   if (!events.length) return;
   const store = await getStore();
   const liveLinkIds = new Set(store.links.map((link) => link.id));
-  const accepted = events.filter((event) => liveLinkIds.has(event.linkId));
+  // Idempotent on event.id — absorbs Cloudflare Queue at-least-once redelivery and
+  // duplicate ids within the same batch so redelivered batches can't inflate counts.
+  const seenIds = new Set(store.events.map((existing) => existing.id));
+  const accepted: ClickEvent[] = [];
+  for (const event of events) {
+    if (!liveLinkIds.has(event.linkId) || seenIds.has(event.id)) continue;
+    seenIds.add(event.id);
+    accepted.push(event);
+  }
   if (!accepted.length) return;
   store.events.unshift(...accepted.map((event) => withEventOwner(store, event)));
   store.events = store.events.slice(0, 100000);
@@ -754,7 +812,13 @@ async function persistStore(store: StoreShape): Promise<void> {
     persistTimer = null;
   }
   await fs.mkdir(dataDir, { recursive: true });
-  await fs.writeFile(dataFile, JSON.stringify(store, null, 2));
+  // Write atomically (unique temp file + rename) so an overlapping write or a
+  // crash mid-write can never leave a half-written / unparseable store.json —
+  // which previously got re-seeded on the next load, wiping real clicks.
+  const tempFile = `${dataFile}.tmp.${process.pid}.${persistCounter}`;
+  persistCounter += 1;
+  await fs.writeFile(tempFile, JSON.stringify(store, null, 2));
+  await fs.rename(tempFile, dataFile);
 }
 
 function linksForUser(store: StoreShape, userId: string): SmartLink[] {
