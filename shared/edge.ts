@@ -263,7 +263,8 @@ export function isInstagramInAppBrowser(userAgent = ""): boolean {
 // in-app, so the gate is reached there); Reddit and other sources have already
 // escaped to a real browser by the time they hit the interstitial, so they skip
 // it. Set AGE_GATE_ENABLED = false to turn the gate off everywhere.
-export const AGE_GATE_ENABLED = true;
+// Currently OFF at the owner's request (re-enable by flipping back to true).
+export const AGE_GATE_ENABLED = false;
 export function shouldShowAgeGate(userAgent = ""): boolean {
   return AGE_GATE_ENABLED && isInstagramInAppBrowser(userAgent);
 }

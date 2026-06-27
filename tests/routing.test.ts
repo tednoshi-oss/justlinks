@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SmartLink } from "../shared/types.js";
-import { androidExternalBrowserIntent, deepLinkEscapeUrl, effectiveCountryFilter, externalBrowserEscapeAttemptUrl, isCountryBlocked, isEscapedBrowserRequest, isInAppBrowser, isInstagramInAppBrowser, isLinkPreviewBot, makeRedirectToken, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDecoyPage, renderDeepLinkEscapePage, renderLinkPreviewPage, renderStealthInterstitialPage, shouldServeFastDeepLinkEscape, shouldShowAgeGate, shouldUseBrowserEscape, STEALTH_HEADERS, verifyRedirectToken } from "../shared/edge.js";
+import { AGE_GATE_ENABLED, androidExternalBrowserIntent, deepLinkEscapeUrl, effectiveCountryFilter, externalBrowserEscapeAttemptUrl, isCountryBlocked, isEscapedBrowserRequest, isInAppBrowser, isInstagramInAppBrowser, isLinkPreviewBot, makeRedirectToken, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDecoyPage, renderDeepLinkEscapePage, renderLinkPreviewPage, renderStealthInterstitialPage, shouldServeFastDeepLinkEscape, shouldShowAgeGate, shouldUseBrowserEscape, STEALTH_HEADERS, verifyRedirectToken } from "../shared/edge.js";
 import { cleanSlug, detectDevice, selectDestination } from "../server/routing.js";
 
 const link: SmartLink = {
@@ -122,8 +122,9 @@ test("stealth interstitial hides the destination behind a token; age gate is opt
   assert.doesNotMatch(noGate, /Are you 18 or older\?/);
 });
 
-test("age gate shows for Instagram traffic only, not Reddit (and is globally toggleable)", () => {
-  assert.equal(shouldShowAgeGate("Mozilla/5.0 (iPhone) Instagram 300.0.0.0"), true);
+test("age gate is Instagram-only and follows the AGE_GATE_ENABLED switch", () => {
+  // Instagram traffic mirrors the global switch; everything else is never gated.
+  assert.equal(shouldShowAgeGate("Mozilla/5.0 (iPhone) Instagram 300.0.0.0"), AGE_GATE_ENABLED);
   assert.equal(shouldShowAgeGate("Mozilla/5.0 (iPhone) Reddit/2026"), false);
   assert.equal(shouldShowAgeGate("Mozilla/5.0 (Macintosh) Safari/605"), false); // escaped/external browser
   assert.equal(shouldShowAgeGate(""), false);
