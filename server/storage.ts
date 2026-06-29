@@ -760,10 +760,17 @@ export async function deleteLink(id: string, userId: string): Promise<boolean> {
   const store = await getStore();
   const previousLength = store.links.length;
   store.links = store.links.filter((link) => link.id !== id || link.userId !== userId);
-  store.events = store.events.filter((event) => event.linkId !== id);
+  const deleted = store.links.length !== previousLength;
+  if (deleted) {
+    // Keep the deleted link's clicks in analytics — tag its events with the owner
+    // so they still count toward the user's totals once the link itself is gone.
+    for (const event of store.events) {
+      if (event.linkId === id && !event.userId) event.userId = userId;
+    }
+  }
   invalidateIndexes();
   await persistStore(store);
-  return store.links.length !== previousLength;
+  return deleted;
 }
 
 export async function getSummary(userId: string): Promise<DashboardSummary> {
@@ -829,13 +836,13 @@ function groupsForUser(store: StoreShape, userId: string): LinkGroup[] {
   return store.groups.filter((group) => group.userId === userId);
 }
 
-// Scope analytics strictly to events whose link still exists. This guarantees a
-// deleted link's clicks disappear from every aggregate (Dashboard totals,
-// Analytics, breakdowns) regardless of whether the on-delete event purge ran or
-// a click was still in flight through the edge queue when the link was removed.
-function eventsForLinks(store: StoreShape, links: SmartLink[], _userId: string): ClickEvent[] {
+// Analytics keep a user's clicks even after a link is deleted. We count events
+// owned by the user (event.userId) OR belonging to one of their current links, so
+// a deleted link's historical clicks stay in every aggregate (Dashboard totals,
+// Analytics, breakdowns) instead of disappearing.
+function eventsForLinks(store: StoreShape, links: SmartLink[], userId: string): ClickEvent[] {
   const linkIds = new Set(links.map((link) => link.id));
-  return store.events.filter((event) => linkIds.has(event.linkId));
+  return store.events.filter((event) => event.userId === userId || linkIds.has(event.linkId));
 }
 
 function isGroupOwnedByUser(store: StoreShape, userId: string, groupId: string | null | undefined): boolean {
