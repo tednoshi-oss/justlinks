@@ -15,7 +15,9 @@ import type {
   LinkStatus,
   LinkWithStats,
   SmartLink,
+  TeamAnalyticsPayload,
   TeamMember,
+  TeamMemberStat,
   UserRole,
   UserStatus
 } from "../shared/types.js";
@@ -810,6 +812,56 @@ export async function getAnalytics(userId: string, days = 30): Promise<Analytics
     dailyBreakdown: buildDailyBreakdown(events, Math.min(days, 30)),
     linkPerformance: withStats(links, events).sort((a, b) => b.clicks - a.clicks),
     recentEvents: events.slice(0, 20)
+  };
+}
+
+// Team-wide analytics (owner only): combined totals + a per-member (per-VA)
+// breakdown so the owner can see each team member's performance. Each click
+// belongs to exactly one member (its owner), so summing members never double-counts.
+export async function getTeamAnalytics(days = 30): Promise<TeamAnalyticsPayload> {
+  const store = await getStore();
+  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const inRange = (event: ClickEvent) => new Date(event.occurredAt).getTime() >= since;
+
+  const teamEvents: ClickEvent[] = [];
+  let activeLinks = 0;
+  let totalLinks = 0;
+
+  const members: TeamMemberStat[] = store.users
+    .map((user) => {
+      const links = linksForUser(store, user.id);
+      const events = eventsForLinks(store, links, user.id).filter(inRange);
+      teamEvents.push(...events);
+      const active = links.filter((link) => link.status === "active").length;
+      activeLinks += active;
+      totalLinks += links.length;
+      const perLink = withStats(links, events).sort((a, b) => b.clicks - a.clicks);
+      const top = perLink[0];
+      return {
+        userId: user.id,
+        name: user.name || user.email,
+        email: user.email,
+        role: user.role,
+        status: user.status,
+        clicks: events.length,
+        uniqueVisitors: new Set(events.map((event) => event.visitorKey)).size,
+        activeLinks: active,
+        totalLinks: links.length,
+        topLinkName: top && top.clicks > 0 ? top.name : null,
+        topLinkClicks: top ? top.clicks : 0,
+        lastClickAt: events[0]?.occurredAt ?? null
+      };
+    })
+    .sort((a, b) => b.clicks - a.clicks);
+
+  return {
+    totalClicks: teamEvents.length,
+    uniqueVisitors: new Set(teamEvents.map((event) => event.visitorKey)).size,
+    activeLinks,
+    totalLinks,
+    memberCount: store.users.length,
+    clicksOverTime: buildSeries(teamEvents, Math.min(days, 30)),
+    members
   };
 }
 

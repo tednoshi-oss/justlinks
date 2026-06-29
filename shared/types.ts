@@ -106,6 +106,31 @@ export interface AuthUser {
   createdAt: string;
 }
 
+export interface TeamMemberStat {
+  userId: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  status: UserStatus;
+  clicks: number;
+  uniqueVisitors: number;
+  activeLinks: number;
+  totalLinks: number;
+  topLinkName: string | null;
+  topLinkClicks: number;
+  lastClickAt: string | null;
+}
+
+export interface TeamAnalyticsPayload {
+  totalClicks: number;
+  uniqueVisitors: number;
+  activeLinks: number;
+  totalLinks: number;
+  memberCount: number;
+  clicksOverTime: SeriesPoint[];
+  members: TeamMemberStat[];
+}
+
 export interface TeamMember extends AuthUser {}
 
 export interface ApiKeySummary {

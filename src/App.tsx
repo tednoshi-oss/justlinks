@@ -27,14 +27,15 @@ import {
   Sparkles,
   Trash2,
   User,
+  Users,
   X
 } from "lucide-react";
 import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
-import type { AnalyticsPayload, ApiKeyPermission, ApiKeySummary, AuthUser, BreakdownPoint, ClickEvent, CountryFilterMode, CreatedApiKey, DashboardSummary, LinkGroup, LinkWithStats, SmartLink, TeamMember, UserRole, UserStatus } from "../shared/types";
+import type { AnalyticsPayload, ApiKeyPermission, ApiKeySummary, AuthUser, BreakdownPoint, ClickEvent, CountryFilterMode, CreatedApiKey, DashboardSummary, LinkGroup, LinkWithStats, SmartLink, TeamAnalyticsPayload, TeamMember, TeamMemberStat, UserRole, UserStatus } from "../shared/types";
 import { countries, countryName, searchCountries } from "./countries";
 
-type View = "dashboard" | "links" | "analytics" | "api" | "team";
+type View = "dashboard" | "links" | "analytics" | "api" | "team" | "team-analytics";
 type SortMode = "newest" | "oldest" | "most-clicks" | "least-clicks" | "name-asc" | "name-desc";
 type ApiDocsTab = "manual" | "prompt";
 
@@ -68,6 +69,7 @@ export function App() {
   const [analytics, setAnalytics] = useState<AnalyticsPayload>(blankAnalytics);
   const [apiKeys, setApiKeys] = useState<ApiKeySummary[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [teamAnalytics, setTeamAnalytics] = useState<TeamAnalyticsPayload | null>(null);
   const [days, setDays] = useState(30);
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("newest");
@@ -133,6 +135,13 @@ export function App() {
     void refreshTeamMembers();
   }, [authUser, view]);
 
+  useEffect(() => {
+    if (!authUser || authUser.status !== "approved" || view !== "team-analytics" || authUser.role !== "owner") return;
+    void refreshTeamAnalytics(days);
+    const interval = window.setInterval(() => void refreshTeamAnalytics(days, true), 20000);
+    return () => window.clearInterval(interval);
+  }, [authUser, view, days]);
+
   async function refresh(nextDays = days, silent = false) {
     try {
       if (!silent) setLoading(true);
@@ -172,6 +181,14 @@ export function App() {
       setTeamMembers(await api.teamMembers());
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to load team members.");
+    }
+  }
+
+  async function refreshTeamAnalytics(nextDays = days, silent = false) {
+    try {
+      setTeamAnalytics(await api.teamAnalytics(nextDays));
+    } catch (requestError) {
+      if (!silent) setError(requestError instanceof Error ? requestError.message : "Unable to load team analytics.");
     }
   }
 
@@ -362,6 +379,7 @@ export function App() {
               />
             ) : null}
             {view === "analytics" ? <AnalyticsView analytics={analytics} days={days} onDaysChange={setDays} /> : null}
+            {view === "team-analytics" && authUser.role === "owner" ? <TeamAnalyticsView data={teamAnalytics} days={days} onDaysChange={setDays} /> : null}
             {view === "api" ? <ApiView keys={apiKeys} onCreateKey={saveApiKey} onDeleteKey={(key) => void removeApiKey(key)} /> : null}
             {view === "team" && canManageTeam(authUser) ? <TeamView members={teamMembers} currentUser={authUser} onUpdate={(id, payload) => void saveTeamMember(id, payload)} /> : null}
           </>
@@ -665,6 +683,7 @@ function NavList({ active, user, onNavigate }: { active: View; user: AuthUser; o
       <NavButton active={active === "dashboard"} icon={<LayoutDashboard size={18} />} label="Dashboard" onClick={() => onNavigate("dashboard")} />
       <NavButton active={active === "links"} icon={<Link2 size={18} />} label="Links" onClick={() => onNavigate("links")} />
       <NavButton active={active === "analytics"} icon={<BarChart3 size={18} />} label="Analytics" onClick={() => onNavigate("analytics")} />
+      {user.role === "owner" ? <NavButton active={active === "team-analytics"} icon={<Users size={18} />} label="Team Analytics" onClick={() => onNavigate("team-analytics")} /> : null}
       <NavButton active={active === "api"} icon={<KeyRound size={18} />} label="API" onClick={() => onNavigate("api")} />
       {canManageTeam(user) ? <NavButton active={active === "team"} icon={<User size={18} />} label="Team" onClick={() => onNavigate("team")} /> : null}
     </nav>
@@ -861,6 +880,66 @@ function LinksView({
           )}
         </div>
       </section>
+    </section>
+  );
+}
+
+function TeamAnalyticsView({ data, days, onDaysChange }: { data: TeamAnalyticsPayload | null; days: number; onDaysChange: (days: number) => void }) {
+  if (!data) {
+    return (
+      <section className="page-content">
+        <div className="empty-message">Loading team analytics…</div>
+      </section>
+    );
+  }
+  const members: TeamMemberStat[] = [...data.members].sort((a, b) => b.clicks - a.clicks);
+  return (
+    <section className="page-content">
+      <div className="date-toolbar">
+        <select className="select" value={days} onChange={(event) => onDaysChange(Number(event.target.value))}>
+          <option value={1}>Today</option>
+          <option value={7}>Last 7 Days</option>
+          <option value={14}>Last 14 Days</option>
+          <option value={30}>Last 30 Days</option>
+          <option value={90}>Last 90 Days</option>
+        </select>
+      </div>
+
+      <div className="stat-grid">
+        <SmallMetric label="Team Clicks" value={data.totalClicks} detail={`${data.uniqueVisitors.toLocaleString()} unique`} accent />
+        <SmallMetric label="Active Links" value={data.activeLinks} detail={`${data.totalLinks} total`} />
+        <SmallMetric label="Team Members" value={data.memberCount} detail="in your team" />
+        <SmallMetric label="Avg / Member" value={data.memberCount ? Math.round(data.totalClicks / data.memberCount) : 0} detail="clicks per member" />
+      </div>
+
+      <Panel title={`Team Clicks Over Time (${daysLabel(days)})`}>
+        <LineChart points={data.clicksOverTime} />
+      </Panel>
+
+      <Panel title="Per-Member Performance">
+        {members.length === 0 ? (
+          <div className="empty-message">No team members yet.</div>
+        ) : (
+          <div className="team-list">
+            {members.map((member) => (
+              <article className="team-card" key={member.userId}>
+                <div className="team-member-main">
+                  <div className="team-avatar">{member.name.slice(0, 1).toUpperCase()}</div>
+                  <div>
+                    <strong>{member.name}</strong>
+                    <span>{member.email}{member.role !== "member" ? ` · ${member.role}` : ""}</span>
+                  </div>
+                </div>
+                <div className="team-meta">
+                  <span><strong>{member.clicks.toLocaleString()}</strong> clicks · {member.uniqueVisitors.toLocaleString()} unique</span>
+                  <span>{member.activeLinks} active link{member.activeLinks === 1 ? "" : "s"}{member.topLinkName ? ` · top: ${member.topLinkName} (${member.topLinkClicks})` : ""}</span>
+                  <span>{member.lastClickAt ? `Last click ${timeAgo(member.lastClickAt)}` : "No clicks yet"}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </Panel>
     </section>
   );
 }
@@ -2427,6 +2506,7 @@ function slugify(value: string): string {
 }
 
 function currentView(): View {
+  if (window.location.pathname.includes("/team-analytics")) return "team-analytics";
   if (window.location.pathname.includes("/team")) return "team";
   if (window.location.pathname.includes("/api")) return "api";
   if (window.location.pathname.includes("/analytics")) return "analytics";
@@ -2435,6 +2515,7 @@ function currentView(): View {
 }
 
 function viewTitle(view: View): string {
+  if (view === "team-analytics") return "Team Analytics";
   if (view === "team") return "Team";
   if (view === "api") return "API Keys";
   if (view === "links") return "Links";
@@ -2443,6 +2524,7 @@ function viewTitle(view: View): string {
 }
 
 function viewSubtitle(view: View): string {
+  if (view === "team-analytics") return "Whole-team performance, broken down by member";
   if (view === "team") return "Approve and manage team access";
   if (view === "api") return "Manage your API access";
   if (view === "links") return "Manage your tracking links";

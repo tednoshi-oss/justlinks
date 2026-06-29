@@ -1,4 +1,4 @@
-import type { AnalyticsPayload, ApiKeyPermission, ApiKeySummary, AuthUser, CreatedApiKey, DashboardSummary, LinkGroup, LinkWithStats, SmartLink, TeamMember, UserRole, UserStatus } from "../shared/types";
+import type { AnalyticsPayload, ApiKeyPermission, ApiKeySummary, AuthUser, CreatedApiKey, DashboardSummary, LinkGroup, LinkWithStats, SmartLink, TeamAnalyticsPayload, TeamMember, UserRole, UserStatus } from "../shared/types";
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -71,6 +71,7 @@ export const api = {
     }),
   summary: () => requestJson<DashboardSummary>("/api/summary"),
   analytics: (days = 30) => requestJson<AnalyticsPayload>(`/api/analytics?days=${days}`),
+  teamAnalytics: (days = 30) => requestJson<TeamAnalyticsPayload>(`/api/team/analytics?days=${days}`),
   apiKeys: () => requestJson<ApiKeySummary[]>("/api/api-keys"),
   createApiKey: (payload: { name: string; permissions: ApiKeyPermission[] }) =>
     requestJson<CreatedApiKey>("/api/api-keys", {

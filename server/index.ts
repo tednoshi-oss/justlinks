@@ -23,6 +23,7 @@ import {
   findLinkById,
   findLinkBySlug,
   getAnalytics,
+  getTeamAnalytics,
   getPublicLinkStats,
   getSummary,
   getUserBySession,
@@ -514,6 +515,16 @@ app.get("/api/analytics", async (request, response, next) => {
   }
 });
 
+app.get("/api/team/analytics", async (request, response, next) => {
+  try {
+    if (!requireOwner(response)) return;
+    const days = Math.max(7, Math.min(90, Number(request.query.days || 30)));
+    response.json(await getTeamAnalytics(days));
+  } catch (error) {
+    next(error);
+  }
+});
+
 function redirectSecret(): string | null {
   return process.env.EDGE_SYNC_SECRET || null;
 }
@@ -858,6 +869,15 @@ function requireAdmin(response: express.Response): AuthUser | null {
   const user = currentUser(response);
   if (user.role !== "owner" && user.role !== "admin") {
     response.status(403).json({ error: "Admin access required." });
+    return null;
+  }
+  return user;
+}
+
+function requireOwner(response: express.Response): AuthUser | null {
+  const user = currentUser(response);
+  if (user.role !== "owner") {
+    response.status(403).json({ error: "Owner access required." });
     return null;
   }
   return user;
