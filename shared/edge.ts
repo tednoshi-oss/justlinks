@@ -259,12 +259,21 @@ export function isInstagramInAppBrowser(userAgent = ""): boolean {
   return /instagram/i.test(userAgent);
 }
 
-// iOS Instagram specifically. Apple/Meta block force-opening Safari from
-// Instagram's iOS webview, so iOS Instagram traffic is left to open in-app; the
-// escape path skips it. Android Instagram is NOT skipped — it escapes to Chrome
-// via the forced-Chrome intent (which works there).
-export function isIosInstagramInAppBrowser(userAgent = ""): boolean {
-  return /instagram/i.test(userAgent) && /iphone|ipad|ipod/i.test(userAgent);
+// Instagram in-app browser escape using Instagram's OWN "extbrowser" scheme. This
+// tells the Instagram app itself to open the URL in the user's DEFAULT browser
+// (Safari on iOS, Chrome on Android) — the same as the app's "Open in external
+// browser" menu, but automatic. It works on iOS because the Instagram APP handles
+// the scheme (not the webview), so Apple's force-Safari block doesn't apply.
+export function renderInstagramExtBrowserEscape(targetUrl: string): string {
+  const scheme = `instagram://extbrowser/?url=${encodeURIComponent(targetUrl)}`;
+  const safeScheme = escapeHtml(scheme);
+  const jsScheme = JSON.stringify(scheme);
+  const styles =
+    "*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0b10;color:#f2f2f3;font-family:-apple-system,BlinkMacSystemFont,Inter,ui-sans-serif,system-ui,sans-serif}main{width:min(360px,calc(100vw - 32px));text-align:center;display:flex;flex-direction:column;align-items:center;gap:16px}.sp{width:30px;height:30px;border-radius:50%;border:3px solid rgb(255 255 255 / .15);border-top-color:#3b82f6;animation:sp .8s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}p{margin:0;color:rgb(255 255 255 / .7);font-size:14px}a{display:none;min-height:46px;align-items:center;justify-content:center;padding:0 22px;border-radius:12px;background:#3b82f6;color:#fff;font-weight:700;font-size:15px;text-decoration:none}";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta http-equiv="refresh" content="0;url=${safeScheme}"><title>Opening…</title><style>${styles}</style></head><body><main><div class="sp"></div><p>Opening in your browser…</p><a id="m" href="${safeScheme}">Open in browser</a></main><script>
+try{window.location.href=${jsScheme};}catch(e){}
+setTimeout(function(){var m=document.getElementById('m');if(m)m.style.display='inline-flex';},1500);
+</script></body></html>`;
 }
 
 // 18+ age gate toggle. It is shown only to Instagram traffic (which opens links

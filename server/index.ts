@@ -42,7 +42,7 @@ import {
 import { deleteLinkFromEdge, edgeClickToStoredClick, isEdgeSyncConfigured, syncLinksToEdge, syncLinkToEdge } from "./edge-sync.js";
 import { sendPasswordResetEmail } from "./email.js";
 import { classifyReferrer, cleanSlug, detectBrowser, detectDevice, hashVisitor, selectDestination } from "./routing.js";
-import { deepLinkEscapeUrl, effectiveCountryFilter, isCountryBlocked, isEscapedBrowserRequest, isHttpUrl, isIosInstagramInAppBrowser, isLinkPreviewBot, isMobileDevice, makeRedirectToken, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDecoyPage, renderDeepLinkEscapePage, renderLinkPreviewPage, renderStealthInterstitialPage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldShowAgeGate, shouldUseBrowserEscape, STEALTH_HEADERS, toEdgeLink, verifyRedirectToken, type EdgeClickEvent } from "../shared/edge.js";
+import { deepLinkEscapeUrl, effectiveCountryFilter, isCountryBlocked, isEscapedBrowserRequest, isHttpUrl, isInstagramInAppBrowser, isLinkPreviewBot, isMobileDevice, makeRedirectToken, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDecoyPage, renderDeepLinkEscapePage, renderInstagramExtBrowserEscape, renderLinkPreviewPage, renderStealthInterstitialPage, selectWebFallback, shouldServeFastDeepLinkEscape, shouldShowAgeGate, shouldUseBrowserEscape, STEALTH_HEADERS, toEdgeLink, verifyRedirectToken, type EdgeClickEvent } from "../shared/edge.js";
 import type { ApiKeyPermission, AuthUser, ClickEvent, LinkGroup, SmartLink } from "../shared/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -634,14 +634,27 @@ async function redirectSlug(request: express.Request, response: express.Response
     const webDestination = selectWebFallback(link);
     const browserEscape = shouldUseBrowserEscape(link);
 
-    // #8 Manual escape card for in-app browsers (not yet escaped). iOS Instagram is
-    // excluded (Apple blocks force-opening Safari, so it stays in-app); Android
-    // Instagram is included and escapes to Chrome via the forced-Chrome intent.
+    // Instagram (iOS + Android): open the user's DEFAULT browser via Instagram's own
+    // extbrowser scheme (Safari on iOS, Chrome on Android). Works on iOS because the
+    // Instagram app handles the scheme, not the webview.
+    if (
+      isInstagramInAppBrowser(userAgent) &&
+      browserEscape &&
+      isHttpUrl(webDestination) &&
+      isMobileDevice(device) &&
+      !isEscapedBrowserRequest(new URLSearchParams(request.query as Record<string, string>))
+    ) {
+      response.set({ "Cache-Control": "no-cache, must-revalidate, max-age=0", "Referrer-Policy": "strict-origin-when-cross-origin", "X-Content-Type-Options": "nosniff" });
+      response.status(200).send(renderInstagramExtBrowserEscape(deepLinkEscapeUrl(absoluteRequestUrl(request))));
+      return;
+    }
+
+    // #8 Manual escape card for other in-app browsers (Reddit/Facebook/TikTok…).
     if (
       browserEscape &&
       isHttpUrl(webDestination) &&
       isMobileDevice(device) &&
-      !isIosInstagramInAppBrowser(userAgent) &&
+      !isInstagramInAppBrowser(userAgent) &&
       !isEscapedBrowserRequest(new URLSearchParams(request.query as Record<string, string>))
     ) {
       response.set({

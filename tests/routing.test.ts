@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SmartLink } from "../shared/types.js";
-import { AGE_GATE_ENABLED, androidExternalBrowserIntent, deepLinkEscapeUrl, effectiveCountryFilter, externalBrowserEscapeAttemptUrl, isCountryBlocked, isEscapedBrowserRequest, isInAppBrowser, isInstagramInAppBrowser, isIosInstagramInAppBrowser, isLinkPreviewBot, makeRedirectToken, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDecoyPage, renderDeepLinkEscapePage, renderLinkPreviewPage, renderStealthInterstitialPage, shouldServeFastDeepLinkEscape, shouldShowAgeGate, shouldUseBrowserEscape, STEALTH_HEADERS, verifyRedirectToken } from "../shared/edge.js";
+import { AGE_GATE_ENABLED, androidExternalBrowserIntent, deepLinkEscapeUrl, effectiveCountryFilter, externalBrowserEscapeAttemptUrl, isCountryBlocked, isEscapedBrowserRequest, isInAppBrowser, isInstagramInAppBrowser, isLinkPreviewBot, makeRedirectToken, normalizeCountryCode, parseHtmlMetadata, previewFetchUrl, renderCountryBlockedPage, renderDecoyPage, renderDeepLinkEscapePage, renderInstagramExtBrowserEscape, renderLinkPreviewPage, renderStealthInterstitialPage, shouldServeFastDeepLinkEscape, shouldShowAgeGate, shouldUseBrowserEscape, STEALTH_HEADERS, verifyRedirectToken } from "../shared/edge.js";
 import { cleanSlug, detectDevice, selectDestination } from "../server/routing.js";
 
 const link: SmartLink = {
@@ -130,17 +130,16 @@ test("age gate is Instagram-only and follows the AGE_GATE_ENABLED switch", () =>
   assert.equal(shouldShowAgeGate(""), false);
 });
 
-test("Instagram escape: iOS-only is excluded (stays in-app); Android Instagram escapes", () => {
-  // The escape gate keys off isIosInstagramInAppBrowser, so only iOS Instagram is held back.
-  assert.equal(isIosInstagramInAppBrowser("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) Instagram 309.0.0"), true);
-  assert.equal(isIosInstagramInAppBrowser("Mozilla/5.0 (iPad) Instagram 309"), true);
-  assert.equal(isIosInstagramInAppBrowser("Mozilla/5.0 (Linux; Android 14; Pixel) Instagram 309.0.0"), false); // Android IG escapes
-  assert.equal(isIosInstagramInAppBrowser("Mozilla/5.0 (iPhone) Reddit/2026"), false);
-  assert.equal(isIosInstagramInAppBrowser("Mozilla/5.0 (iPhone) Safari/605"), false);
-  // Android Instagram gets the manual escape card with a forced-Chrome intent.
-  const androidIg = renderDeepLinkEscapePage("https://tapsocials.com/d-x?escaped=1", "Mozilla/5.0 (Linux; Android 14) Instagram 309");
-  assert.match(androidIg, /package=com\.android\.chrome/);
-  assert.match(androidIg, /Open in Chrome/);
+test("Instagram escape uses Instagram's own extbrowser scheme (opens the default browser on iOS + Android)", () => {
+  const target = "https://tapsocials.com/d-x?escaped=1";
+  const html = renderInstagramExtBrowserEscape(target);
+  // Fires instagram://extbrowser/?url=<url-encoded target> via meta refresh + JS.
+  assert.match(html, /instagram:\/\/extbrowser\/\?url=/);
+  assert.match(html, /http-equiv="refresh"/);
+  assert.ok(html.includes(encodeURIComponent(target))); // destination is URL-encoded inside the scheme
+  assert.match(html, /noindex/);
+  // It does NOT rely on the dead iOS URL schemes.
+  assert.doesNotMatch(html, /x-safari|googlechrome|com-apple/);
 });
 
 test("STEALTH_HEADERS enforce no-referrer + noindex on redirect-path responses", () => {

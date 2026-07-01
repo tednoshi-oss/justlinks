@@ -21,7 +21,8 @@ import {
   renderLinkPreviewPage,
   selectWebFallback,
   selectDestination,
-  isIosInstagramInAppBrowser,
+  isInstagramInAppBrowser,
+  renderInstagramExtBrowserEscape,
   shouldShowAgeGate,
   makeRedirectToken,
   verifyRedirectToken,
@@ -122,14 +123,25 @@ export default {
     const webDestination = selectWebFallback(link);
     const browserEscape = shouldUseBrowserEscape(link);
 
-    // #8 Manual escape card for in-app browsers (not yet escaped). iOS Instagram is
-    // excluded (Apple blocks force-opening Safari, so it stays in-app); Android
-    // Instagram is included and escapes to Chrome via the forced-Chrome intent.
+    // Instagram (iOS + Android): open the user's DEFAULT browser via Instagram's own
+    // extbrowser scheme (Safari on iOS, Chrome on Android). Works on iOS because the
+    // Instagram app handles the scheme, not the webview.
+    if (
+      isInstagramInAppBrowser(userAgent) &&
+      browserEscape &&
+      isHttpUrl(webDestination) &&
+      isMobileDevice(device) &&
+      !isEscapedBrowserRequest(url.searchParams)
+    ) {
+      return htmlResponse(renderInstagramExtBrowserEscape(deepLinkEscapeUrl(request.url)), 200, noCacheHeaders());
+    }
+
+    // #8 Manual escape card for other in-app browsers (Reddit/Facebook/TikTok…).
     if (
       browserEscape &&
       isHttpUrl(webDestination) &&
       isMobileDevice(device) &&
-      !isIosInstagramInAppBrowser(userAgent) &&
+      !isInstagramInAppBrowser(userAgent) &&
       !isEscapedBrowserRequest(url.searchParams)
     ) {
       return htmlResponse(renderDeepLinkEscapePage(deepLinkEscapeUrl(request.url), userAgent), 200, noCacheHeaders());
