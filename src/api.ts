@@ -107,6 +107,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  bulkDeleteLinks: (ids: string[]) =>
+    requestJson<{ affected: number }>("/api/links/bulk", {
+      method: "POST",
+      body: JSON.stringify({ action: "delete", ids })
+    }),
+  bulkAssignGroup: (ids: string[], groupId: string | null) =>
+    requestJson<{ affected: number }>("/api/links/bulk", {
+      method: "POST",
+      body: JSON.stringify({ action: "group", ids, groupId })
+    }),
   updateLink: (id: string, payload: Partial<SmartLink>) =>
     requestJson<LinkWithStats>(`/api/links/${id}`, {
       method: "PUT",

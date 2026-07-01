@@ -1306,6 +1306,50 @@ textarea:focus {
   background: rgb(38 38 44 / 0.42);
 }
 
+.links-table.selecting .links-table-head,
+.links-table.selecting .link-row {
+  grid-template-columns: 34px minmax(240px, 1fr) 80px 120px 178px;
+}
+
+.row-check,
+.head-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.row-check input,
+.head-check input {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: #3b82f6;
+}
+
+.link-row.row-selected {
+  background: rgb(59 130 246 / 0.1);
+}
+
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgb(59 130 246 / 0.08);
+}
+
+.bulk-bar .spacer {
+  flex: 1;
+}
+
+.bulk-bar strong {
+  font-size: 14px;
+}
+
 .link-main {
   display: flex;
   min-width: 0;
@@ -2090,6 +2134,11 @@ textarea:focus {
   .links-table-head,
   .link-row {
     grid-template-columns: minmax(260px, 1fr) 78px 112px 168px;
+  }
+
+  .links-table.selecting .links-table-head,
+  .links-table.selecting .link-row {
+    grid-template-columns: 32px minmax(220px, 1fr) 78px 112px 168px;
   }
 
   .api-key-card {

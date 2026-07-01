@@ -255,6 +255,19 @@ export function App() {
     await refresh();
   }
 
+  async function bulkDelete(ids: string[]) {
+    if (!ids.length) return;
+    if (!window.confirm(`Delete ${ids.length} link${ids.length === 1 ? "" : "s"}? Their click stats stay in your analytics.`)) return;
+    await api.bulkDeleteLinks(ids);
+    await refresh();
+  }
+
+  async function bulkAssignGroup(ids: string[], groupId: string | null) {
+    if (!ids.length) return;
+    await api.bulkAssignGroup(ids, groupId);
+    await refresh();
+  }
+
   function openCreateGroup() {
     setEditingGroup(null);
     setGroupOpen(true);
@@ -373,6 +386,8 @@ export function App() {
                 onEdit={setEditingLink}
                 onDelete={(link) => void removeLink(link)}
                 onAssignGroup={(link, groupId) => void assignGroup(link, groupId)}
+                onBulkDelete={(ids) => void bulkDelete(ids)}
+                onBulkAssignGroup={(ids, groupId) => void bulkAssignGroup(ids, groupId)}
                 onStats={setStatsLink}
                 onCountryFilter={setCountryFilterLink}
                 onRefresh={() => void refresh()}
@@ -800,6 +815,8 @@ function LinksView({
   onEdit,
   onDelete,
   onAssignGroup,
+  onBulkDelete,
+  onBulkAssignGroup,
   onStats,
   onCountryFilter,
   onRefresh
@@ -820,12 +837,44 @@ function LinksView({
   onEdit: (link: LinkWithStats) => void;
   onDelete: (link: LinkWithStats) => void;
   onAssignGroup: (link: LinkWithStats, groupId: string | null) => void;
+  onBulkDelete: (ids: string[]) => void;
+  onBulkAssignGroup: (ids: string[], groupId: string | null) => void;
   onStats: (link: LinkWithStats) => void;
   onCountryFilter: (link: LinkWithStats) => void;
   onRefresh: () => void;
 }) {
   const normalCount = allLinks.filter((link) => !isDeepLink(link)).length;
   const deepCount = allLinks.filter(isDeepLink).length;
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const visibleIds = links.map((link) => link.id);
+  const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+  function toggleId(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleAll() {
+    setSelectedIds(allSelected ? new Set() : new Set(visibleIds));
+  }
+  function exitSelect() {
+    setSelecting(false);
+    setSelectedIds(new Set());
+  }
+  function runBulkDelete() {
+    const ids = [...selectedIds];
+    onBulkDelete(ids);
+    exitSelect();
+  }
+  function runBulkGroup(value: string) {
+    const ids = [...selectedIds];
+    onBulkAssignGroup(ids, value === "__none" ? null : value);
+    exitSelect();
+  }
 
   return (
     <section className="page-content">
@@ -844,6 +893,9 @@ function LinksView({
             <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search links..." />
           </label>
           <SortMenu value={sortMode} onChange={onSortChange} />
+          <button className={`button ${selecting ? "primary" : "outline"}`} type="button" onClick={() => (selecting ? exitSelect() : setSelecting(true))}>
+            {selecting ? "Cancel" : "Select"}
+          </button>
           <button className="button primary" type="button" onClick={onCreate}>
             <Plus size={16} />
             Create Link
@@ -853,8 +905,41 @@ function LinksView({
 
       <GroupBar groups={groups} selectedGroup={selectedGroup} onSelect={onGroupSelect} onCreate={onCreateGroup} onEdit={onEditGroup} onDelete={onDeleteGroup} />
 
-      <section className="links-table">
+      {selecting ? (
+        <div className="bulk-bar">
+          <strong>{selectedIds.size} selected</strong>
+          <div className="spacer" />
+          <select
+            className="select compact"
+            value=""
+            disabled={selectedIds.size === 0}
+            onChange={(event) => {
+              if (event.target.value) runBulkGroup(event.target.value);
+            }}
+            aria-label="Move selected links to group"
+          >
+            <option value="">Move to group…</option>
+            <option value="__none">No group</option>
+            {groups.map((group) => (
+              <option key={group.id} value={group.id}>
+                {group.name}
+              </option>
+            ))}
+          </select>
+          <button className="button outline danger" type="button" disabled={selectedIds.size === 0} onClick={runBulkDelete}>
+            <Trash2 size={15} />
+            Delete
+          </button>
+        </div>
+      ) : null}
+
+      <section className={`links-table ${selecting ? "selecting" : ""}`}>
         <div className="links-table-head">
+          {selecting ? (
+            <label className="head-check">
+              <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all links" />
+            </label>
+          ) : null}
           <span>Link</span>
           <span>Clicks</span>
           <span>Type</span>
@@ -867,6 +952,9 @@ function LinksView({
                 key={link.id}
                 link={link}
                 groups={groups}
+                selecting={selecting}
+                selected={selectedIds.has(link.id)}
+                onToggleSelect={() => toggleId(link.id)}
                 onEdit={() => onEdit(link)}
                 onDelete={() => onDelete(link)}
                 onAssignGroup={(groupId) => onAssignGroup(link, groupId)}
@@ -1680,6 +1768,9 @@ function GroupModal({ editGroup, onClose, onSubmit }: { editGroup?: LinkGroup | 
 function LinkRow({
   link,
   groups,
+  selecting = false,
+  selected = false,
+  onToggleSelect,
   onEdit,
   onDelete,
   onAssignGroup,
@@ -1689,6 +1780,9 @@ function LinkRow({
 }: {
   link: LinkWithStats;
   groups: LinkGroup[];
+  selecting?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onAssignGroup: (groupId: string | null) => void;
@@ -1726,7 +1820,12 @@ function LinkRow({
   }
 
   return (
-    <article className="link-row">
+    <article className={`link-row ${selected ? "row-selected" : ""}`}>
+      {selecting ? (
+        <label className="row-check">
+          <input type="checkbox" checked={selected} onChange={() => onToggleSelect?.()} aria-label={`Select ${link.name}`} />
+        </label>
+      ) : null}
       <div className="link-main">
         <span className="row-link-copy" aria-hidden="true">
           <Link2 size={16} />

@@ -11,8 +11,10 @@ import {
   consumePasswordReset,
   createApiKey,
   createGroup,
+  assignLinksToGroup,
   createLink,
   createLinks,
+  deleteLinks,
   createPasswordReset,
   createSession,
   createUserAccount,
@@ -465,6 +467,42 @@ app.post("/api/links", async (request, response, next) => {
     } else {
       response.status(201).json({ links, created: links.length });
     }
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/links/bulk", async (request, response, next) => {
+  try {
+    const userId = currentUser(response).id;
+    const action = String(request.body?.action || "");
+    const ids: string[] = Array.isArray(request.body?.ids) ? request.body.ids.filter((id: unknown): id is string => typeof id === "string") : [];
+    if (!ids.length) {
+      response.status(400).json({ error: "No links selected." });
+      return;
+    }
+
+    if (action === "delete") {
+      const removed = await deleteLinks(ids, userId);
+      for (const link of removed) {
+        await deleteLinkFromEdge(link.slug).catch((error) => console.error("Failed to delete edge slug", error));
+      }
+      response.json({ affected: removed.length });
+      return;
+    }
+
+    if (action === "group") {
+      const groupId = typeof request.body?.groupId === "string" && request.body.groupId ? request.body.groupId : null;
+      const updated = await assignLinksToGroup(ids, groupId, userId);
+      for (const link of updated) {
+        const linkGroup = link.groupId ? await findGroupById(link.groupId, userId) : null;
+        await syncLinkToEdge(link, linkGroup ?? null).catch((error) => console.error("Failed to sync link to edge", error));
+      }
+      response.json({ affected: updated.length });
+      return;
+    }
+
+    response.status(400).json({ error: "Unknown bulk action." });
   } catch (error) {
     next(error);
   }

@@ -744,6 +744,46 @@ export async function createLink(input: Partial<SmartLink>, userId: string): Pro
   return link;
 }
 
+// Bulk delete. Returns the removed links (with slugs) so callers can purge them
+// from the edge. Clicks are kept in analytics (tagged with the owner), mirroring
+// single-link delete.
+export async function deleteLinks(ids: string[], userId: string): Promise<SmartLink[]> {
+  const store = await getStore();
+  const idSet = new Set(ids);
+  const removed = store.links.filter((link) => idSet.has(link.id) && link.userId === userId);
+  if (!removed.length) return [];
+  const removedIds = new Set(removed.map((link) => link.id));
+  store.links = store.links.filter((link) => !removedIds.has(link.id));
+  for (const event of store.events) {
+    if (removedIds.has(event.linkId) && !event.userId) event.userId = userId;
+  }
+  invalidateIndexes();
+  await persistStore(store);
+  return removed;
+}
+
+// Bulk assign (or clear, when groupId is null) a group for many links. Returns the
+// updated links so callers can re-sync them to the edge (group filters cascade).
+export async function assignLinksToGroup(ids: string[], groupId: string | null, userId: string): Promise<SmartLink[]> {
+  const store = await getStore();
+  const targetGroup = groupId && isGroupOwnedByUser(store, userId, groupId) ? groupId : null;
+  const idSet = new Set(ids);
+  const now = new Date().toISOString();
+  const updated: SmartLink[] = [];
+  store.links = store.links.map((link) => {
+    if (idSet.has(link.id) && link.userId === userId) {
+      const next: SmartLink = { ...link, groupId: targetGroup, updatedAt: now };
+      updated.push(next);
+      return next;
+    }
+    return link;
+  });
+  if (!updated.length) return [];
+  invalidateIndexes();
+  await persistStore(store);
+  return updated;
+}
+
 export async function updateLink(id: string, input: Partial<SmartLink>, userId: string): Promise<LinkWithStats | null> {
   const store = await getStore();
   const index = store.links.findIndex((link) => link.id === id && link.userId === userId);
