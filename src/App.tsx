@@ -233,7 +233,7 @@ export function App() {
     setView(nextView);
   }
 
-  async function saveLink(payload: Partial<SmartLink>) {
+  async function saveLink(payload: Partial<SmartLink> & { count?: number }) {
     if (editingLink) {
       await api.updateLink(editingLink.id, payload);
       setEditingLink(null);
@@ -2004,7 +2004,7 @@ function CountryFilterModal({
   );
 }
 
-function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | null; onClose: () => void; onSubmit: (payload: Partial<SmartLink>) => Promise<void> }) {
+function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | null; onClose: () => void; onSubmit: (payload: Partial<SmartLink> & { count?: number }) => Promise<void> }) {
   const isEdit = Boolean(editLink);
   const [title, setTitle] = useState(editLink?.name || "");
   const [destinationUrl, setDestinationUrl] = useState(editLink?.fallbackUrl || "");
@@ -2012,14 +2012,17 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
   const [shortCode, setShortCode] = useState(editLink?.slug || "");
   const [customCode, setCustomCode] = useState(Boolean(editLink));
   const [deepLink, setDeepLink] = useState(editLink ? isDeepLink(editLink) : false);
+  const [quantity, setQuantity] = useState(1);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const bulk = !isEdit && quantity > 1;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setSaving(true);
     setFormError(null);
-    const cleanedSlug = customCode && shortCode ? normalizeShortCode(shortCode, deepLink) : !isEdit ? randomCode(deepLink) : undefined;
+    // Bulk always uses unique random codes; a custom short code only applies to a single link.
+    const cleanedSlug = bulk ? undefined : customCode && shortCode ? normalizeShortCode(shortCode, deepLink) : !isEdit ? randomCode(deepLink) : undefined;
     try {
       await onSubmit({
         name: title,
@@ -2032,8 +2035,9 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
         deepLinkPath: "",
         tags: inferTags(notes, title),
         isDeepLink: deepLink,
-        forceExternalBrowser: deepLink
-      } as Partial<SmartLink>);
+        forceExternalBrowser: deepLink,
+        ...(bulk ? { count: quantity } : {})
+      } as Partial<SmartLink> & { count?: number });
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Unable to save this link. Please try again.");
       setSaving(false);
@@ -2063,7 +2067,7 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
         <div className="field">
           <div className="field-row">
             <span>Short Code</span>
-            {!isEdit ? (
+            {!isEdit && !bulk ? (
               <div className="tiny-toggle">
                 <button type="button" className={!customCode ? "active" : ""} onClick={() => setCustomCode(false)}>
                   <Shuffle size={14} />
@@ -2076,7 +2080,7 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
               </div>
             ) : null}
           </div>
-          {customCode || isEdit ? (
+          {(customCode || isEdit) && !bulk ? (
             <div className="short-input-row">
               <span>{shortLinkHost}/</span>
               <input value={shortCode} onChange={(event) => setShortCode(event.target.value.replace(/[^a-zA-Z0-9_-]/g, ""))} placeholder="my-link" />
@@ -2085,9 +2089,23 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
               </button>
             </div>
           ) : (
-            <p className="help-text">A random 8-character code will be generated automatically.</p>
+            <p className="help-text">{bulk ? `Creating ${quantity} links, each with its own unique random short code.` : "A random 8-character code will be generated automatically."}</p>
           )}
         </div>
+
+        {!isEdit ? (
+          <label className="field">
+            <span>Number of links</span>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={quantity}
+              onChange={(event) => setQuantity(Math.max(1, Math.min(100, Math.floor(Number(event.target.value)) || 1)))}
+            />
+            <p className="help-text">Create up to 100 at once — same destination &amp; settings, each with a different short code (great for spreading one link across many subreddits).</p>
+          </label>
+        ) : null}
 
         <label className="field">
           <span>Notes (optional)</span>
@@ -2133,7 +2151,7 @@ function LinkModal({ editLink, onClose, onSubmit }: { editLink: LinkWithStats | 
             Cancel
           </button>
           <button className="button primary" type="submit" disabled={saving}>
-            {saving ? "Saving..." : isEdit ? "Update Link" : "Create Link"}
+            {saving ? "Saving..." : isEdit ? "Update Link" : bulk ? `Create ${quantity} Links` : "Create Link"}
           </button>
         </div>
       </form>

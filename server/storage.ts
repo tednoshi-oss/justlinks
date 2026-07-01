@@ -685,41 +685,63 @@ export async function deleteGroup(id: string, userId: string): Promise<boolean> 
   return true;
 }
 
-export async function createLink(input: Partial<SmartLink>, userId: string): Promise<LinkWithStats> {
+// Create one or many links from the same input. For count > 1 (bulk), every link
+// gets its OWN unique random short code and a "Name #n" suffix, but shares the same
+// destination, deep-link setting, group and country filters — so one destination can
+// be spread across many shortcodes (e.g. one per subreddit) in a single write.
+export async function createLinks(input: Partial<SmartLink>, userId: string, count = 1): Promise<LinkWithStats[]> {
   const store = await getStore();
+  const total = Math.max(1, Math.min(100, Math.floor(Number(count)) || 1));
   const isDeepLink = input.isDeepLink !== false;
-  const requestedSlug = input.slug ? cleanSlug(input.slug) : isDeepLink ? `d-${cryptoRandom()}` : cleanSlug(input.name || "new-link");
-  const slug = await uniqueSlug(isDeepLink && !requestedSlug.startsWith("d-") ? `d-${requestedSlug}` : requestedSlug, store.links);
+  const baseName = String(input.name || "Untitled Link").trim();
+  const groupId = isGroupOwnedByUser(store, userId, input.groupId) ? input.groupId || null : null;
+  const created: SmartLink[] = [];
 
-  const now = new Date().toISOString();
-  const link: SmartLink = {
-    id: `lnk_${cryptoRandom()}`,
-    userId,
-    name: String(input.name || "Untitled Link").trim(),
-    slug,
-    description: String(input.description || "").trim(),
-    iosUrl: String(input.iosUrl || "").trim(),
-    androidUrl: String(input.androidUrl || "").trim(),
-    webUrl: String(input.webUrl || input.fallbackUrl || "").trim(),
-    fallbackUrl: String(input.fallbackUrl || input.webUrl || "").trim(),
-    deepLinkPath: String(input.deepLinkPath || "").trim(),
-    notes: String(input.notes || input.description || "").trim(),
-    isDeepLink,
-    forceExternalBrowser: Boolean(input.forceExternalBrowser),
-    groupId: isGroupOwnedByUser(store, userId, input.groupId) ? input.groupId || null : null,
-    tags: normalizeTags(input.tags),
-    status: normalizeStatus(input.status),
-    countryFilterMode: normalizeCountryFilterMode(input.countryFilterMode),
-    blockedCountries: normalizeBlockedCountries(input.blockedCountries),
-    allowedCountries: normalizeBlockedCountries(input.allowedCountries),
-    createdAt: now,
-    updatedAt: now
-  };
+  for (let index = 0; index < total; index += 1) {
+    // A custom slug only applies to a single link; bulk always gets unique codes.
+    const requestedSlug =
+      total === 1 && input.slug
+        ? cleanSlug(input.slug)
+        : isDeepLink
+          ? `d-${cryptoRandom()}`
+          : cleanSlug(String(input.name || "new-link"));
+    const slug = await uniqueSlug(isDeepLink && !requestedSlug.startsWith("d-") ? `d-${requestedSlug}` : requestedSlug, store.links);
+    const now = new Date().toISOString();
+    const link: SmartLink = {
+      id: `lnk_${cryptoRandom()}`,
+      userId,
+      name: total > 1 ? `${baseName} #${index + 1}` : baseName,
+      slug,
+      description: String(input.description || "").trim(),
+      iosUrl: String(input.iosUrl || "").trim(),
+      androidUrl: String(input.androidUrl || "").trim(),
+      webUrl: String(input.webUrl || input.fallbackUrl || "").trim(),
+      fallbackUrl: String(input.fallbackUrl || input.webUrl || "").trim(),
+      deepLinkPath: String(input.deepLinkPath || "").trim(),
+      notes: String(input.notes || input.description || "").trim(),
+      isDeepLink,
+      forceExternalBrowser: Boolean(input.forceExternalBrowser),
+      groupId,
+      tags: normalizeTags(input.tags),
+      status: normalizeStatus(input.status),
+      countryFilterMode: normalizeCountryFilterMode(input.countryFilterMode),
+      blockedCountries: normalizeBlockedCountries(input.blockedCountries),
+      allowedCountries: normalizeBlockedCountries(input.allowedCountries),
+      createdAt: now,
+      updatedAt: now
+    };
+    store.links.unshift(link);
+    created.push(link);
+  }
 
-  store.links.unshift(link);
   invalidateIndexes();
   await persistStore(store);
-  return withStats([link], store.events)[0];
+  return created.map((link) => withStats([link], store.events)[0]);
+}
+
+export async function createLink(input: Partial<SmartLink>, userId: string): Promise<LinkWithStats> {
+  const [link] = await createLinks(input, userId, 1);
+  return link;
 }
 
 export async function updateLink(id: string, input: Partial<SmartLink>, userId: string): Promise<LinkWithStats | null> {

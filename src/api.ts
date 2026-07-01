@@ -102,8 +102,8 @@ export const api = {
       throw new Error(`Delete failed: ${response.status}`);
     }
   },
-  createLink: (payload: Partial<SmartLink>) =>
-    requestJson<LinkWithStats>("/api/links", {
+  createLink: (payload: Partial<SmartLink> & { count?: number }) =>
+    requestJson<LinkWithStats | { links: LinkWithStats[]; created: number }>("/api/links", {
       method: "POST",
       body: JSON.stringify(payload)
     }),

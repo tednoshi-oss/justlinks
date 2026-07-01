@@ -12,6 +12,7 @@ import {
   createApiKey,
   createGroup,
   createLink,
+  createLinks,
   createPasswordReset,
   createSession,
   createUserAccount,
@@ -452,10 +453,18 @@ app.post("/api/links", async (request, response, next) => {
       return;
     }
     const userId = currentUser(response).id;
-    const link = await createLink(request.body, userId);
-    const linkGroup = link.groupId ? await findGroupById(link.groupId, userId) : null;
-    await syncLinkToEdge(link, linkGroup ?? null).catch((error) => console.error("Failed to sync link to edge", error));
-    response.status(201).json(link);
+    const count = Math.max(1, Math.min(100, Math.floor(Number(request.body?.count)) || 1));
+    const links = await createLinks(request.body, userId, count);
+    for (const link of links) {
+      const linkGroup = link.groupId ? await findGroupById(link.groupId, userId) : null;
+      await syncLinkToEdge(link, linkGroup ?? null).catch((error) => console.error("Failed to sync link to edge", error));
+    }
+    // Backward-compatible: single create returns the link object; bulk returns the list.
+    if (count === 1) {
+      response.status(201).json(links[0]);
+    } else {
+      response.status(201).json({ links, created: links.length });
+    }
   } catch (error) {
     next(error);
   }
