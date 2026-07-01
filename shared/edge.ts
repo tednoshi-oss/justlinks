@@ -259,6 +259,14 @@ export function isInstagramInAppBrowser(userAgent = ""): boolean {
   return /instagram/i.test(userAgent);
 }
 
+// iOS Instagram specifically. Apple/Meta block force-opening Safari from
+// Instagram's iOS webview, so iOS Instagram traffic is left to open in-app; the
+// escape path skips it. Android Instagram is NOT skipped — it escapes to Chrome
+// via the forced-Chrome intent (which works there).
+export function isIosInstagramInAppBrowser(userAgent = ""): boolean {
+  return /instagram/i.test(userAgent) && /iphone|ipad|ipod/i.test(userAgent);
+}
+
 // 18+ age gate toggle. It is shown only to Instagram traffic (which opens links
 // in-app, so the gate is reached there); Reddit and other sources have already
 // escaped to a real browser by the time they hit the interstitial, so they skip

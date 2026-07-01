@@ -21,7 +21,7 @@ import {
   renderLinkPreviewPage,
   selectWebFallback,
   selectDestination,
-  isInstagramInAppBrowser,
+  isIosInstagramInAppBrowser,
   shouldShowAgeGate,
   makeRedirectToken,
   verifyRedirectToken,
@@ -122,12 +122,14 @@ export default {
     const webDestination = selectWebFallback(link);
     const browserEscape = shouldUseBrowserEscape(link);
 
-    // #8 Manual escape card for in-app browsers (not yet escaped, excluding Instagram).
+    // #8 Manual escape card for in-app browsers (not yet escaped). iOS Instagram is
+    // excluded (Apple blocks force-opening Safari, so it stays in-app); Android
+    // Instagram is included and escapes to Chrome via the forced-Chrome intent.
     if (
       browserEscape &&
       isHttpUrl(webDestination) &&
       isMobileDevice(device) &&
-      !isInstagramInAppBrowser(userAgent) &&
+      !isIosInstagramInAppBrowser(userAgent) &&
       !isEscapedBrowserRequest(url.searchParams)
     ) {
       return htmlResponse(renderDeepLinkEscapePage(deepLinkEscapeUrl(request.url), userAgent), 200, noCacheHeaders());
